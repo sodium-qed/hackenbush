@@ -1,0 +1,211 @@
+.hb-field {
+  --hb-paper: #f7f7ed;
+  --hb-joint: #304333;
+  --hb-green: #357b4a;
+  --hb-red: #ac5040;
+  --hb-blue: #426b9a;
+  position: relative;
+  isolation: isolate;
+  width: 100%;
+  min-width: 0;
+  min-height: 210px;
+  aspect-ratio: 10 / 3;
+  overflow: hidden;
+  background: var(--hb-paper);
+}
+
+.hb-field > svg {
+  display: block;
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  outline: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+.hb-field__dot {
+  fill: #778263;
+  opacity: 0.32;
+}
+
+.hb-field__ground,
+.hb-field__joints,
+.hb-field__effects,
+.hb-field__scissors {
+  pointer-events: none;
+}
+
+.hb-field__ground-line {
+  fill: none;
+  stroke: #59604c;
+  stroke-width: 1.4;
+  stroke-linecap: square;
+}
+
+.hb-field__etch {
+  fill: none;
+  stroke: #747a63;
+  stroke-width: 0.85;
+}
+
+.hb-field--green { --hb-branch: var(--hb-green); }
+.hb-field--red { --hb-branch: var(--hb-red); }
+.hb-field--blue { --hb-branch: var(--hb-blue); }
+
+.hb-field__edge {
+  outline: none;
+}
+
+.hb-field__hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 26px;
+  stroke-linecap: round;
+  pointer-events: stroke;
+}
+
+.hb-field__halo,
+.hb-field__stem,
+.hb-field__stripes {
+  fill: none;
+  stroke-linecap: round;
+  pointer-events: none;
+}
+
+.hb-field__stem {
+  stroke: var(--hb-branch);
+  stroke-width: 5;
+}
+
+.hb-field__stripes {
+  stroke: var(--hb-paper);
+  stroke-width: 1.35;
+  stroke-linecap: butt;
+}
+
+.hb-field__halo {
+  stroke: var(--hb-branch);
+  stroke-width: 13;
+  opacity: 0;
+}
+
+.hb-field__edge--hint .hb-field__halo {
+  stroke: #b29339;
+  stroke-width: 16;
+  stroke-dasharray: 2.4 3.2;
+  opacity: 0.54;
+}
+
+.hb-field__edge--target .hb-field__halo {
+  stroke: var(--hb-branch);
+  stroke-width: 14;
+  stroke-dasharray: none;
+  opacity: 0.23;
+}
+
+.hb-field__edge--target .hb-field__stem {
+  stroke-width: 5.7;
+}
+
+.hb-field__edge--falling .hb-field__stem {
+  stroke-dasharray: 5 5;
+  opacity: 0.39;
+}
+
+.hb-field__edge--falling .hb-field__stripes {
+  opacity: 0;
+}
+
+.hb-field__joint {
+  fill: var(--hb-joint);
+}
+
+.hb-field__joint--falling {
+  opacity: 0.37;
+}
+
+.hb-field__svg--cuttable {
+  cursor: pointer;
+}
+
+.hb-field__scissor-back,
+.hb-field__scissor-ink,
+.hb-field__scissor-handle {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.hb-field__scissor-back {
+  stroke: var(--hb-paper);
+  stroke-width: 4.3;
+}
+
+.hb-field__scissor-ink,
+.hb-field__scissor-handle {
+  stroke: #303b2d;
+  stroke-width: 1.65;
+}
+
+.hb-field__scissor-handle,
+.hb-field__scissor-pin {
+  fill: var(--hb-paper);
+}
+
+.hb-field__snip,
+.hb-field__fall {
+  transform-box: fill-box;
+  transform-origin: 50% 78%;
+}
+
+.hb-field__snip {
+  animation: hb-field-snip 180ms ease-out both;
+}
+
+.hb-field__fall {
+  animation: hb-field-fall 410ms cubic-bezier(0.38, 0.02, 0.73, 0.5) both;
+}
+
+@keyframes hb-field-snip {
+  from { opacity: 0.88; }
+  to { opacity: 0; transform: translate(var(--hb-drift), 2px); }
+}
+
+@keyframes hb-field-fall {
+  0% { opacity: 0.95; }
+  35% { opacity: 0.76; }
+  100% { opacity: 0; transform: translate(var(--hb-drift), 19px) rotate(var(--hb-spin)); }
+}
+
+@media (pointer: coarse) {
+  .hb-field__hit { stroke-width: 37px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hb-field__fall,
+  .hb-field__snip {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+@media (forced-colors: active) {
+  .hb-field { background: Canvas; }
+  .hb-field__dot { fill: GrayText; }
+  .hb-field__ground-line,
+  .hb-field__etch,
+  .hb-field__stem,
+  .hb-field__scissor-ink,
+  .hb-field__scissor-handle { stroke: CanvasText; }
+  .hb-field__joint { fill: CanvasText; }
+  .hb-field__stripes,
+  .hb-field__scissor-back { stroke: Canvas; }
+  .hb-field__scissor-handle,
+  .hb-field__scissor-pin { fill: Canvas; }
+  .hb-field__edge--target .hb-field__halo,
+  .hb-field__edge--hint .hb-field__halo { stroke: Highlight; opacity: 0.75; }
+}
