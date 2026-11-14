@@ -56,6 +56,9 @@ function permissionText() {
   const choices = game.variant === 'mixed' ? game.side + ' or green' : game.side;
   return 'Choose a ' + choices + ' branch to cut.';
 }
+function turnAnnouncement() {
+  return seatName(game.side) === 'You' ? 'Your turn.' : seatName(game.side) + ' to move.';
+}
 function winTitle() {
   return seatName(game.victor) + (seatName(game.victor) === 'You' ? ' win!' : ' wins!');
 }
@@ -118,7 +121,7 @@ function renderHistory() {
 function renderLinkPanel(waiting) {
   const linked = game.opponent === 'link';
   $('link-area').hidden = !linked;
-  if (!linked) return;
+  if (!linked) { $('share-turn').hidden = true; return; }
   const canShare = !!game.victor || waiting;
   $('share-turn').hidden = !canShare;
   $('share-turn').querySelector('span').textContent = game.victor ? 'Share result' : 'Share turn link';
@@ -174,6 +177,13 @@ function scheduleComputer() {
   }, 540);
 }
 function makeMove(id) {
+  if (game.opponent === 'link') {
+    const latest = recentLinkGames().find(item => matchKey(item) === matchKey(game));
+    if (latest && latest.moves?.length >= game.moves.length && JSON.stringify(latest.moves) !== JSON.stringify(game.moves)) {
+      const shared = restoreGame(latest);
+      if (shared) { activate(shared, 'The shared game advanced in another tab.'); return; }
+    }
+  }
   const next = playCut(game, id);
   if (!next) return;
   game = next;
@@ -184,7 +194,7 @@ function makeMove(id) {
   if (game.opponent === 'link') replaceHash(encodeTurn(game));
   render({ removed: last.fallen, cutId: last.edgeId });
   announce(seatName(last.side) + ' cut branch ' + last.branch + '. ' + plural(last.fallen.length, 'other branch', 'other branches') + ' fell. ' +
-    (game.victor ? winTitle() + ' ' + outcomeText() : seatName(game.side) + ' to move.'));
+    (game.victor ? winTitle() + ' ' + outcomeText() : turnAnnouncement()));
   scheduleComputer();
 }
 function activate(next, note = '') {
@@ -200,7 +210,7 @@ function activate(next, note = '') {
 }
 function restartWith(settings, note) {
   activate(createGame({ ...saveData(game), seat: 'blue', ...settings }), note);
-  announce(note || 'New puzzle. ' + seatName(game.side) + ' to move.');
+  announce(note || 'New puzzle. ' + turnAnnouncement());
 }
 function processLocation() {
   if (location.hash.startsWith('#turn=')) {
@@ -289,7 +299,9 @@ $('copy-seed').addEventListener('click', async () => {
   else { input.focus(); input.select(); $('seed-note').textContent = 'Select Copy to copy the highlighted seed.'; }
 });
 $('share-turn').addEventListener('click', () => {
-  const url = new URL(location.href);
+  // The owner copy also hands off turns on the public game table.
+  const base = location.hostname.endsWith('.chatgpt.site') ? 'https://sodium-qed.github.io/hackenbush/' : location.href;
+  const url = new URL(base);
   url.hash = encodeTurn(game);
   $('share-url').value = url.href;
   $('share-title').textContent = game.victor ? 'Share the result' : 'Pass the turn';
