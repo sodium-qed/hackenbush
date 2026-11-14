@@ -244,7 +244,9 @@ function colorEdges(edges, rootEdges, random, variant) {
   });
 }
 
-export function generateBoard(seed = 'GROVE7', variant = 'green', difficulty = 'standard') {
+// Version 1 is the original seeded field. Its ordering and random draws are
+// part of invitations and saved move histories.
+function legacyBoard(seed, variant, difficulty) {
   const label = String(seed);
   const size = Object.hasOwn(SIZES, difficulty) ? difficulty : 'standard';
   const colorVariant = variant === 'redblue' || variant === 'mixed' ? variant : 'green';
@@ -275,6 +277,279 @@ export function generateBoard(seed = 'GROVE7', variant = 'green', difficulty = '
   const colors = randomSource(JSON.stringify([label, size, colorVariant, 'colors']));
   colorEdges(edges, rootEdges, colors, colorVariant);
   return { nodes, edges };
+}
+
+const NETWORK_SIZES = {
+  small: { edges: [12, 18], columns: [3], cycles: [1], roots: [2] },
+  standard: { edges: [24, 32], columns: [4, 5], cycles: [2, 3], roots: [2, 3] },
+  large: { edges: [36, 48], columns: [6, 7], cycles: [3, 4], roots: [3, 4] },
+};
+
+// Crowns grow from the upper junction of a stem. The first form at each size
+// of two or more has a supporting first edge with further growth above it.
+const CROWNS = [
+  [],
+  [motif([[0, 0], [25, 43]], [[0, 1]])],
+  [
+    motif([[0, 0], [9, 36], [-12, 72]], [[0, 1, 2]]),
+    motif([[0, 0], [-28, 39], [28, 46]], [[0, 1], [0, 2]]),
+  ],
+  [
+    motif([[0, 0], [2, 36], [-27, 68], [31, 75]], [[0, 1, 2], [1, 3]]),
+    motif([[0, 0], [-24, 36], [-43, 73], [28, 46]], [[0, 1, 2], [0, 3]]),
+  ],
+  [
+    motif([[0, 0], [-12, 34], [-43, 62], [-7, 79], [29, 38]], [[0, 1, 2], [1, 3], [0, 4]]),
+    motif([[0, 0], [19, 35], [44, 69], [-18, 38], [-36, 79]], [[0, 1, 2], [0, 3, 4]]),
+  ],
+  [
+    motif([[0, 0], [-14, 36], [-47, 66], [-9, 79], [24, 36], [41, 77]], [[0, 1, 2], [1, 3], [0, 4, 5]]),
+    motif([[0, 0], [-12, 33], [-38, 66], [17, 57], [7, 90], [49, 82]], [[0, 1, 2], [1, 3, 4], [3, 5]]),
+  ],
+];
+
+// Each hollow is made of two ordered paths between neighboring stems. Some
+// meet in a fork, others reach two different heights on both sides.
+const HOLLOW_PATHS = [
+  [[0, 0], [1, 1]],
+  [[0, 0], [0, 1]],
+  [[0, 0], [1, 0]],
+  [[1, 0], [1, 1]],
+  [[0, 1], [1, 1]],
+];
+
+function drawing() {
+  const nodes = [];
+  const edges = [];
+  function node(x, y) {
+    const point = { id: 'n' + nodes.length, x: Math.round(x), y: Math.round(y) };
+    if (point.y === GROUND_Y) point.ground = true;
+    nodes.push(point);
+    return point;
+  }
+  function edge(a, b) {
+    const index = edges.length;
+    edges.push({ id: 'e' + index, a: a.id, b: b.id, color: 'green' });
+    return index;
+  }
+  return { nodes, edges, node, edge };
+}
+
+function networkPlan(random, size) {
+  const config = NETWORK_SIZES[size];
+  const total = Math.floor(between(random, config.edges[0], config.edges[1] + 1));
+  const count = choose(random, config.columns);
+  const columns = Array.from({ length: count }, (_, i) => i);
+  const overhang = random() < 0.5 ? 0 : count - 1;
+  const outerGap = overhang === 0 ? 0 : count - 2;
+  const interior = columns.filter(i => i !== overhang);
+  const loaded = choose(random, interior);
+  const crown = Array(count).fill(0);
+  crown[loaded] = size === 'small' ? 2 : 3;
+  crown[overhang] = size === 'small' ? 1 : size === 'standard' ? 2 : 3;
+  if (size === 'large') crown[choose(random, interior.filter(i => i !== loaded))] = 2;
+
+  const rootCount = choose(random, config.roots);
+  const rootSplit = Math.floor(count / 2) + (overhang === 0 ? 1 : 0);
+  const roots = [
+    choose(random, interior.filter(i => i < rootSplit)),
+    choose(random, interior.filter(i => i >= rootSplit)),
+  ];
+  roots.push(...shuffle(random, interior.filter(i => !roots.includes(i))).slice(0, rootCount - 2));
+  const hollows = shuffle(random, columns.slice(0, -1).filter(i => i !== outerGap))
+    .slice(0, choose(random, config.cycles));
+  const links = [];
+  for (let gap = 0; gap < count - 1; gap++) {
+    if (hollows.includes(gap)) {
+      const paths = choose(random, HOLLOW_PATHS);
+      links.push({ gap, ports: paths[0], side: 'low' }, { gap, ports: paths[1], side: 'high' });
+    } else {
+      links.push({ gap, ports: choose(random, [[0, 0], [1, 0], [0, 1], [1, 1]]), side: 'single' });
+    }
+  }
+  const used = count + roots.length + links.length + crown.reduce((sum, length) => sum + length, 0);
+  // Spend the remaining edges on different levels of the same connected
+  // growth. A bend can in turn carry a new shoot in the middle of a span.
+  for (let left = total - used; left > 0; left--) {
+    const choices = [];
+    columns.forEach(i => {
+      if (crown[i] < 5) choices.push(() => { crown[i]++; });
+      if (crown[i] === 0) choices.push(() => { crown[i]++; });
+    });
+    links.forEach(link => {
+      if (!link.bent) choices.push(() => { link.bent = true; });
+      else if (link.side !== 'low' && !link.shoot) choices.push(() => { link.shoot = true; });
+    });
+    choose(random, choices)();
+  }
+  return { count, roots, overhang, outerGap, loaded, crown, links };
+}
+
+function growNetwork(random, size) {
+  const plan = networkPlan(random, size);
+  const graph = drawing();
+  const roots = [];
+  const loads = [];
+  const start = between(random, 94, 113);
+  const end = between(random, 787, 806);
+  const spacing = (end - start) / (plan.count - 1);
+  const stems = Array.from({ length: plan.count }, (_, index) => {
+    const wobble = index > 0 && index < plan.count - 1 ? between(random, -0.1, 0.1) * spacing : 0;
+    const x = start + spacing * index + wobble;
+    const topY = plan.crown[index] >= 3 ? between(random, 103, 144) : between(random, 91, 151);
+    const base = graph.node(x, Math.min(207, topY + between(random, 45, 73)));
+    const top = graph.node(x + between(random, -23, 23), topY);
+    graph.edge(base, top);
+    if (plan.roots.includes(index)) {
+      const root = graph.node(x + between(random, -31, 31), GROUND_Y);
+      roots.push(graph.edge(root, base));
+    }
+    return [base, top];
+  });
+
+  plan.links.forEach(link => {
+    const [left, right] = link.ports;
+    const a = stems[link.gap][left];
+    const b = stems[link.gap + 1][right];
+    const first = graph.edges.length;
+    if (link.bent) {
+      const t = between(random, 0.39, 0.61);
+      const sign = link.side === 'single' ? choose(random, [-1, 1]) : link.side === 'low' ? 1 : -1;
+      const mid = graph.node(a.x + (b.x - a.x) * t,
+        Math.min(214, a.y + (b.y - a.y) * t + sign * between(random, 16, 33)));
+      graph.edge(a, mid);
+      graph.edge(mid, b);
+      if (link.shoot) {
+        const tip = graph.node(mid.x + between(random, -19, 19),
+          Math.max(35, mid.y - between(random, 37, 54)));
+        graph.edge(mid, tip);
+      }
+    } else {
+      graph.edge(a, b);
+    }
+    if (link.gap === plan.outerGap) {
+      loads.push(first + (plan.overhang === 0 && link.bent ? 1 : 0));
+    }
+  });
+
+  plan.crown.forEach((length, index) => {
+    if (!length) return;
+    const shape = index === plan.loaded ? CROWNS[length][0] : choose(random, CROWNS[length]);
+    const top = stems[index][1];
+    const tallest = Math.max(...shape.points.map(point => point[1]));
+    const ys = Math.min(between(random, 0.98, 1.16), (top.y - 35) / tallest);
+    const reach = Math.min(spacing * 0.36, top.x - LEFT - 2, RIGHT - top.x - 2);
+    const xs = Math.min(between(random, 0.99, 1.31), reach / 49) * choose(random, [-1, 1]);
+    const points = [top, ...shape.points.slice(1).map(([dx, rise]) => graph.node(top.x + dx * xs, top.y - rise * ys))];
+    if (index === plan.loaded) loads.push(graph.edges.length);
+    for (const [a, b] of shape.edges) graph.edge(points[a], points[b]);
+  });
+  return { nodes: graph.nodes, edges: graph.edges, roots, loads };
+}
+
+function openingNetwork() {
+  const grove = motif([
+    [113, 244], [134, 179], [94, 119], [49, 86], [99, 65], [190, 143], [247, 165],
+    [239, 103], [171, 91], [250, 64], [219, 38], [278, 35], [328, 190], [399, 151],
+    [378, 244], [429, 96], [408, 48], [468, 61], [496, 117], [555, 98], [559, 163],
+    [470, 178], [578, 244], [611, 72], [648, 125], [717, 157], [764, 104], [747, 60],
+    [824, 78], [765, 198],
+  ], [
+    [0, 1, 2, 3], [2, 4], [1, 5, 6, 7, 8, 2], [7, 9, 10], [9, 11], [6, 12, 13],
+    [14, 13, 15, 16], [15, 17], [15, 18, 19, 20, 21, 13], [20, 22],
+    [20, 24, 25, 26, 27], [26, 28], [25, 29], [19, 23, 24],
+  ]);
+  const graph = drawing();
+  const nodes = grove.points.map(([x, y]) => graph.node(x, y));
+  const roots = [];
+  const loads = [];
+  for (const [a, b] of grove.edges) {
+    const index = graph.edge(nodes[a], nodes[b]);
+    if (nodes[a].ground || nodes[b].ground) roots.push(index);
+    if ((a === 7 && b === 9) || (a === 24 && b === 25)) loads.push(index);
+  }
+  return { nodes: graph.nodes, edges: graph.edges, roots, loads };
+}
+
+function gapSquared(p, a, b) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy)));
+  return (p.x - a.x - t * dx) ** 2 + (p.y - a.y - t * dy) ** 2;
+}
+
+function turn(a, b, c) {
+  return (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
+}
+
+function wellSpaced(network) {
+  const points = new Map(network.nodes.map(point => [point.id, point]));
+  for (const [index, point] of network.nodes.entries()) {
+    for (let previous = 0; previous < index; previous++) {
+      const other = network.nodes[previous];
+      if ((point.x - other.x) ** 2 + (point.y - other.y) ** 2 < 30 ** 2) return false;
+    }
+  }
+  const segments = [];
+  for (const edge of network.edges) {
+    const a = points.get(edge.a);
+    const b = points.get(edge.b);
+    if ((a.x - b.x) ** 2 + (a.y - b.y) ** 2 < 32 ** 2) return false;
+    const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    for (const { c, d, center } of segments) {
+      if (gapSquared(mid, c, d) < 14 ** 2 || gapSquared(center, a, b) < 14 ** 2) return false;
+      if (a === c || a === d || b === c || b === d) continue;
+      if (turn(a, b, c) * turn(a, b, d) < 0 && turn(c, d, a) * turn(c, d, b) < 0) return false;
+      if (Math.min(gapSquared(a, c, d), gapSquared(b, c, d),
+        gapSquared(c, a, b), gapSquared(d, a, b)) < 20 ** 2) return false;
+    }
+    segments.push({ c: a, d: b, center: mid });
+  }
+  return true;
+}
+
+function colorNetwork(network, random, variant) {
+  if (variant === 'green') return;
+  const palette = shuffle(random, variant === 'mixed' ? ['red', 'blue', 'green'] : ['red', 'blue']);
+  const bag = Array.from({ length: network.edges.length }, (_, index) => palette[index % palette.length]);
+  const reserved = new Set();
+  // Each player gets an exclusive cut that brings down further edges and
+  // a second, independent choice at a ground support.
+  for (const indices of [network.roots, network.loads]) {
+    const picks = shuffle(random, indices.slice());
+    ['red', 'blue'].forEach((color, index) => {
+      network.edges[picks[index]].color = color;
+      reserved.add(picks[index]);
+      bag.splice(bag.indexOf(color), 1);
+    });
+  }
+  shuffle(random, bag);
+  network.edges.forEach((edge, index) => {
+    if (!reserved.has(index)) edge.color = bag.pop();
+  });
+}
+
+function networkForSeed(label, size) {
+  if (label === 'GROVE7' && size === 'standard') return openingNetwork();
+  const random = randomSource(JSON.stringify([2, label, size, 'geometry']));
+  for (let attempt = 0; attempt < 96; attempt++) {
+    const network = growNetwork(random, size);
+    if (wellSpaced(network)) return network;
+  }
+  // The first drawing from this stream meets the spacing limits at all three
+  // sizes. It bounds generation time even for a run of crowded layouts.
+  const reserve = randomSource(JSON.stringify([2, 'GROVE-RESERVE-1', size, 'geometry']));
+  return growNetwork(reserve, size);
+}
+
+export function generateBoard(seed = 'GROVE7', variant = 'green', difficulty = 'standard', boardVersion = 2) {
+  if (boardVersion === 1 || boardVersion === '1') return legacyBoard(seed, variant, difficulty);
+  const label = String(seed);
+  const size = Object.hasOwn(NETWORK_SIZES, difficulty) ? difficulty : 'standard';
+  const colors = variant === 'redblue' || variant === 'mixed' ? variant : 'green';
+  const network = networkForSeed(label, size);
+  colorNetwork(network, randomSource(JSON.stringify([2, label, size, colors])), colors);
+  return { nodes: network.nodes, edges: network.edges };
 }
 
 export function freshSeed() {
