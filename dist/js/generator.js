@@ -1,3 +1,5 @@
+import { botanicalGarden } from './garden-layouts.js';
+
 const GROUND_Y = 244;
 const LEFT = 35;
 const RIGHT = 865;
@@ -542,9 +544,16 @@ function networkForSeed(label, size) {
   return growNetwork(reserve, size);
 }
 
-export function generateBoard(seed = 'GROVE7', variant = 'green', difficulty = 'standard', boardVersion = 2) {
+export function generateBoard(seed = 'GROVE7', variant = 'green', difficulty = 'expert', boardVersion = 3) {
   if (boardVersion === 1 || boardVersion === '1') return legacyBoard(seed, variant, difficulty);
   const label = String(seed);
+  if (boardVersion !== 2 && boardVersion !== '2') {
+    const garden = botanicalGarden(label, randomSource);
+    const colors = variant === 'redblue' ? 'redblue' : 'green';
+    colorNetwork(garden, randomSource(JSON.stringify([3, label, colors])), colors);
+    return { nodes: garden.nodes, edges: garden.edges, family: garden.family,
+      height: garden.height, groundY: garden.groundY };
+  }
   const size = Object.hasOwn(NETWORK_SIZES, difficulty) ? difficulty : 'standard';
   const colors = variant === 'redblue' || variant === 'mixed' ? variant : 'green';
   const network = networkForSeed(label, size);

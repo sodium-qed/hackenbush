@@ -3,15 +3,25 @@
   --hb-joint: #304333;
   --hb-green: #357b4a;
   --hb-red: #ac5040;
-  --hb-blue: #426b9a;
+  --hb-blue: #376797;
+  --hb-stem: 5;
+  --hb-target-stem: 5.7;
+  --hb-halo: 14px;
   position: relative;
   isolation: isolate;
   width: 100%;
   min-width: 0;
-  min-height: 210px;
-  aspect-ratio: 10 / 3;
+  min-height: var(--hb-min-height, 210px);
+  aspect-ratio: 900 / var(--hb-height, 270);
   overflow: hidden;
-  background: var(--hb-paper);
+  background-color: var(--hb-paper);
+  background-image: radial-gradient(ellipse at 50% 43%, #faf9ef 0%, #f7f7ed 75%);
+}
+
+.hb-field--dense {
+  --hb-stem: 3.75;
+  --hb-target-stem: 4.6;
+  --hb-halo: 10px;
 }
 
 .hb-field > svg {
@@ -29,7 +39,7 @@
 
 .hb-field__dot {
   fill: #778263;
-  opacity: 0.32;
+  opacity: 0.28;
 }
 
 .hb-field__ground,
@@ -41,14 +51,14 @@
 
 .hb-field__ground-line {
   fill: none;
-  stroke: #59604c;
-  stroke-width: 1.4;
+  stroke: #515d47;
+  stroke-width: 1.45;
   stroke-linecap: square;
 }
 
 .hb-field__etch {
   fill: none;
-  stroke: #747a63;
+  stroke: #737f65;
   stroke-width: 0.85;
 }
 
@@ -78,8 +88,10 @@
 
 .hb-field__stem {
   stroke: var(--hb-branch);
-  stroke-width: 5;
+  stroke-width: var(--hb-stem);
 }
+
+.hb-field--dense .hb-field__stem--support { stroke-width: 4.25; }
 
 .hb-field__stripes {
   stroke: var(--hb-paper);
@@ -94,21 +106,23 @@
 }
 
 .hb-field__edge--hint .hb-field__halo {
-  stroke: #b29339;
-  stroke-width: 16;
-  stroke-dasharray: 2.4 3.2;
-  opacity: 0.54;
+  stroke: #a7862b;
+  stroke-width: calc(var(--hb-halo) + 1px);
+  stroke-linecap: butt;
+  stroke-dasharray: 3.4 2.8;
+  opacity: 0.56;
 }
 
 .hb-field__edge--target .hb-field__halo {
   stroke: var(--hb-branch);
-  stroke-width: 14;
+  stroke-width: var(--hb-halo);
+  stroke-linecap: round;
   stroke-dasharray: none;
   opacity: 0.23;
 }
 
 .hb-field__edge--target .hb-field__stem {
-  stroke-width: 5.7;
+  stroke-width: var(--hb-target-stem);
 }
 
 .hb-field__edge--falling .hb-field__stem {
@@ -124,8 +138,21 @@
   fill: var(--hb-joint);
 }
 
+.hb-field__joint--root {
+  paint-order: stroke;
+  stroke: var(--hb-paper);
+  stroke-width: 1.6;
+}
+
 .hb-field__joint--falling {
   opacity: 0.37;
+}
+
+.hb-field__joint--target {
+  fill: var(--hb-paper);
+  stroke: var(--hb-joint);
+  stroke-width: 1.6;
+  opacity: 1;
 }
 
 .hb-field__svg--cuttable {
@@ -202,6 +229,8 @@
   .hb-field__scissor-ink,
   .hb-field__scissor-handle { stroke: CanvasText; }
   .hb-field__joint { fill: CanvasText; }
+  .hb-field__joint--root { stroke: Canvas; }
+  .hb-field__joint--target { fill: Canvas; stroke: Highlight; }
   .hb-field__stripes,
   .hb-field__scissor-back { stroke: Canvas; }
   .hb-field__scissor-handle,

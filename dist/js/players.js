@@ -1,76 +1,56 @@
-import { otherSide } from './rules.js';
-import { normalizePlayers } from './session.js';
+import { defaultNickname, entrantName } from './draw.js';
 
 let formNumber = 0;
+const letters = ['A', 'B'];
 
 function icon(symbol) {
   return `<svg class="hb-players__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-${symbol}"></use></svg>`;
 }
 
-function slotMarkup(prefix, number) {
-  const id = `${prefix}-p${number}`;
-  const order = number === 1 ? 'first move' : 'second move';
-  const picker = number === 1 ? `
-    <label class="hb-players__color hb-players__color--picker" id="${id}-picker">
-      <span class="hb-players__sr">Player 1 branch color</span>
-      <i class="hb-players__swatch" aria-hidden="true"></i>
-      <select name="firstSide" id="${id}-color">
-        <option value="blue">Blue</option><option value="red">Red</option>
-      </select>
-      ${icon('chevron')}
-    </label>` : '';
+function slotMarkup(prefix, letter) {
+  const id = `${prefix}-${letter}`;
   return `
     <fieldset class="hb-players__slot">
-      <legend class="hb-players__sr">Player ${number}, ${order}</legend>
-      <div class="hb-players__slot-head">
-        <div class="hb-players__identity" aria-hidden="true"><strong>Player ${number}</strong><span> · ${order}</span></div>
-        ${picker}
-        <span class="hb-players__color hb-players__color--fixed" id="${id}-side">
-          <i class="hb-players__swatch" aria-hidden="true"></i>
-          <span class="hb-players__sr">Branch color </span><span id="${id}-side-name"></span>
-        </span>
-      </div>
+      <legend>Entrant ${letter}</legend>
       <div class="hb-players__fields">
         <div class="hb-players__field">
-          <label for="${id}-name">Name <span>(optional)</span></label>
-          <input type="text" id="${id}-name" name="player${number}Name" dir="auto" autocomplete="off" spellcheck="false">
+          <label for="${id}-name"><span class="hb-players__sr">Entrant ${letter} </span><span id="${id}-label">Name</span></label>
+          <input id="${id}-name" name="entrant${letter}Name" type="text" dir="auto"
+            autocomplete="off" enterkeyhint="${letter === 'A' ? 'next' : 'go'}" spellcheck="false" required>
         </div>
-        <div class="hb-players__field">
-          <label for="${id}-kind">Controller</label>
+        <div class="hb-players__field" id="${id}-controller-field">
+          <label for="${id}-kind"><span class="hb-players__sr">Entrant ${letter} </span>Controller</label>
           <div class="hb-players__select">
-            <select id="${id}-kind" name="player${number}Kind">
+            <select id="${id}-kind" name="entrant${letter}Kind">
               <option value="human">Human</option><option value="computer">Computer</option>
-            </select>
-            ${icon('chevron')}
+            </select>${icon('chevron')}
           </div>
         </div>
       </div>
     </fieldset>`;
 }
 
-function limitName(input) {
-  // Native maxlength counts UTF-16 code units and splits the allowance for emoji.
-  const text = Array.from(input.value).slice(0, 24).join('');
-  if (text === input.value) return;
-  const start = Math.min(input.selectionStart ?? text.length, text.length);
-  const end = Math.min(input.selectionEnd ?? start, text.length);
-  input.value = text;
+function limitDraft(input) {
+  // maxlength counts UTF-16 code units, including both halves of an emoji.
+  if (Array.from(input.value).length <= 24) return;
+  const limited = Array.from(input.value.normalize('NFC')).slice(0, 24).join('');
+  const start = Math.min(input.selectionStart ?? limited.length, limited.length);
+  const end = Math.min(input.selectionEnd ?? start, limited.length);
+  input.value = limited;
   input.setSelectionRange(start, end);
 }
 
 export function createPlayers(container, { onStart, onChange } = {}) {
   const prefix = `hb-players-${++formNumber}`;
   const wasHidden = container.hidden;
-  const form = document.createElement('form');
+  const form = container.ownerDocument.createElement('form');
   form.className = 'hb-players';
   form.setAttribute('aria-labelledby', `${prefix}-title`);
+  form.setAttribute('aria-describedby', `${prefix}-draw-note`);
   form.innerHTML = `
     <div class="hb-players__inner">
       <div class="hb-players__header">
-        <div>
-          <h2 id="${prefix}-title">Choose players</h2>
-          <p>The board returns when the match starts.</p>
-        </div>
+        <h2 id="${prefix}-title">Who’s playing?</h2>
         <fieldset class="hb-players__format">
           <legend class="hb-players__sr">Play mode</legend>
           <label><input class="hb-players__sr" type="radio" name="playMode" id="${prefix}-local" value="local" checked>
@@ -79,20 +59,18 @@ export function createPlayers(container, { onStart, onChange } = {}) {
             <span>${icon('link')}Turn links</span></label>
         </fieldset>
       </div>
-      <div class="hb-players__slots">${slotMarkup(prefix, 1)}${slotMarkup(prefix, 2)}</div>
+      <p id="${prefix}-draw-note" class="hb-players__intro"></p>
+      <div class="hb-players__slots">${letters.map(letter => slotMarkup(prefix, letter)).join('')}</div>
       <div class="hb-players__footer">
-        <div class="hb-players__foot-info">
-          <div class="hb-players__device" id="${prefix}-device-wrap" hidden>
-            <label for="${prefix}-device">This device</label>
-            <div class="hb-players__select">
-              <select id="${prefix}-device" name="devicePlayer">
-                <option value="0">Player 1</option><option value="1">Player 2</option>
-              </select>${icon('chevron')}
-            </div>
+        <div class="hb-players__device" id="${prefix}-device-wrap" hidden>
+          <label for="${prefix}-device">On this device</label>
+          <div class="hb-players__select">
+            <select id="${prefix}-device" name="hostIndex">
+              <option value="0">Entrant A</option><option value="1">Entrant B</option>
+            </select>${icon('chevron')}
           </div>
-          <p class="hb-players__note" id="${prefix}-note"></p>
         </div>
-        <button type="submit" class="hb-players__submit">Start match ${icon('arrow')}</button>
+        <button type="submit" class="hb-players__submit">${icon('die')}Draw seats &amp; reveal</button>
       </div>
     </div>`;
   container.hidden = true;
@@ -101,128 +79,105 @@ export function createPlayers(container, { onStart, onChange } = {}) {
   const find = suffix => form.querySelector(`#${prefix}-${suffix}`);
   const local = find('local');
   const link = find('link');
-  const colorPicker = find('p1-picker');
-  const firstColor = find('p1-color');
-  const deviceWrap = find('device-wrap');
   const device = find('device');
-  const note = find('note');
-  const slots = [1, 2].map(number => ({
-    input: find(`p${number}-name`),
-    kind: find(`p${number}-kind`),
-    stamp: find(`p${number}-side`),
-    colorName: find(`p${number}-side-name`),
-    localKind: 'human'
+  const deviceWrap = find('device-wrap');
+  const note = find('draw-note');
+  const slots = letters.map(letter => ({
+    input: find(`${letter}-name`), kind: find(`${letter}-kind`), label: find(`${letter}-label`),
+    kindField: find(`${letter}-controller-field`), localKind: 'human'
   }));
-  let variant = 'green';
-
-  function sides() {
-    return [firstColor.value, otherSide(firstColor.value)];
+  function pending() {
+    const entrants = slots.map(slot => ({ name: slot.input.value, kind: link.checked ? 'human' : slot.localKind }));
+    const opponent = link.checked ? 'link' : entrants.some(e => e.kind === 'computer') ? 'computer' : 'local';
+    return { entrants, opponent, hostIndex: device.value === '1' ? 1 : 0 };
   }
 
-  function assignments(withNames) {
-    const players = {};
-    const colors = sides();
-    slots.forEach((slot, index) => {
-      players[colors[index]] = {
-        kind: link.checked ? 'human' : slot.localKind,
-        name: withNames ? slot.input.value.trim() : ''
-      };
+  function validate(slot, index) {
+    const missing = slot.input.required && !entrantName(slot.input.value);
+    slot.input.setCustomValidity(missing ? `Enter a name for Entrant ${letters[index]}.` : '');
+  }
+
+  function updateHostNames() {
+    const names = slots.map(slot => entrantName(slot.input.value));
+    names.forEach((name, index) => {
+      device.options[index].textContent = !name ? `Entrant ${letters[index]}`
+        : name === names[1 - index] ? `${name} (${letters[index]})` : name;
     });
-    return players;
-  }
-
-  function selection() {
-    const colors = sides();
-    const players = assignments(true);
-    const hasComputer = colors.some(side => players[side].kind === 'computer');
-    const opponent = link.checked ? 'link' : hasComputer ? 'computer' : 'local';
-    const seat = link.checked ? colors[Number(device.value)] : colors.find(side => players[side].kind === 'human') ?? colors[0];
-    return { players, firstSide: firstColor.value, opponent, seat };
   }
 
   function refresh() {
-    const colors = sides();
-    const colored = variant !== 'green';
-    const defaults = normalizePlayers(assignments(false), firstColor.value);
-    firstColor.disabled = !colored;
-    colorPicker.hidden = !colored;
-    colorPicker.dataset.side = firstColor.value;
+    form.classList.toggle('hb-players--linked', link.checked);
+    note.textContent = link.checked ? 'Enter both names and choose who is using this device.'
+      : 'Enter a name for each human player.';
     slots.forEach((slot, index) => {
-      const side = colored ? colors[index] : 'green';
-      slot.stamp.hidden = colored && index === 0;
-      slot.stamp.dataset.side = side;
-      slot.colorName.textContent = side[0].toUpperCase() + side.slice(1);
+      const kind = link.checked ? 'human' : slot.localKind;
       slot.kind.disabled = link.checked;
-      slot.kind.value = defaults[colors[index]].kind;
-      slot.input.placeholder = defaults[colors[index]].name;
+      slot.kindField.hidden = link.checked;
+      slot.kind.value = kind;
+      slot.input.required = kind === 'human';
+      slot.label.textContent = kind === 'human' ? 'Name' : 'Nickname';
+      slot.input.placeholder = kind === 'human' ? 'Enter a name' : defaultNickname(index);
+      validate(slot, index);
     });
     deviceWrap.hidden = !link.checked;
     device.disabled = !link.checked;
-    let help = '';
-    if (link.checked) {
-      help = device.value === '1' ? 'Send the opening link to Player 1.' : 'Send the turn link after your move.';
-    } else if (variant === 'green') {
-      help = 'Both players can cut green branches.';
-    } else if (variant === 'mixed') {
-      help = 'Both players can also cut green branches.';
-    }
-    note.textContent = help;
-    note.hidden = !help;
+    updateHostNames();
   }
 
-  for (const slot of slots) {
-    slot.input.addEventListener('input', event => {
-      if (!event.isComposing) limitName(slot.input);
-    });
-    slot.input.addEventListener('compositionend', () => limitName(slot.input));
+  slots.forEach((slot, index) => {
+    function nameEdited(composing) {
+      if (!composing) limitDraft(slot.input);
+      validate(slot, index);
+      updateHostNames();
+      onChange?.(pending());
+    }
+    slot.input.addEventListener('input', event => nameEdited(event.isComposing));
+    slot.input.addEventListener('compositionend', () => nameEdited(false));
     slot.kind.addEventListener('change', () => {
       if (!link.checked) slot.localKind = slot.kind.value;
       refresh();
+      onChange?.(pending());
     });
-  }
-  for (const control of [local, link, firstColor, device]) control.addEventListener('change', refresh);
-  form.addEventListener('input', event => {
-    if (event.target.type === 'text' && !event.isComposing) onChange?.(selection());
   });
-  form.addEventListener('change', () => onChange?.(selection()));
-  form.addEventListener('compositionend', () => onChange?.(selection()));
+  for (const control of [link, local, device]) control.addEventListener('change', () => {
+    refresh();
+    onChange?.(pending());
+  });
 
-  function open({ variant: nextVariant = 'green', firstSide = 'blue', players, opponent = 'local', seat = 'blue' } = {}) {
-    variant = nextVariant;
-    firstColor.value = firstSide === 'red' ? 'red' : 'blue';
+  function open({ entrants, opponent = 'local', hostIndex = 0 } = {}) {
     link.checked = opponent === 'link';
     local.checked = !link.checked;
-    const colors = sides();
-    const resolved = normalizePlayers(players, firstColor.value, opponent);
-    device.value = seat === colors[1] ? '1' : '0';
-    slots.forEach((slot, index) => { slot.localKind = resolved[colors[index]].kind; });
-    refresh();
+    device.value = hostIndex === 1 ? '1' : '0';
     slots.forEach((slot, index) => {
-      const name = resolved[colors[index]].name;
-      slot.input.value = name === slot.input.placeholder ? '' : name;
+      const supplied = entrants?.[index];
+      const fallback = opponent === 'computer' && index === 1 ? 'computer' : 'human';
+      slot.localKind = (supplied?.kind ?? fallback) === 'computer' ? 'computer' : 'human';
+      slot.input.value = typeof supplied?.name === 'string' ? supplied.name : '';
+      limitDraft(slot.input);
     });
+    form.classList.remove('hb-players--submitted');
+    refresh();
     container.hidden = false;
   }
 
-  function close() {
-    container.hidden = true;
-  }
+  function close() { container.hidden = true; }
 
+  form.addEventListener('invalid', () => {
+    form.classList.add('hb-players--submitted');
+  }, true);
   form.addEventListener('submit', event => {
     event.preventDefault();
     if (container.hidden) return;
-    for (const slot of slots) limitName(slot.input);
-    const result = selection();
+    slots.forEach((slot, index) => {
+      slot.input.value = entrantName(slot.input.value);
+      validate(slot, index);
+    });
+    if (!form.reportValidity()) return;
+    const config = pending();
+    onChange?.(config);
     close();
-    onStart?.(result);
+    onStart?.(config);
   });
 
-  return {
-    open,
-    close,
-    destroy() {
-      form.remove();
-      container.hidden = wasHidden;
-    }
-  };
+  return { open, close, destroy() { form.remove(); container.hidden = wasHidden; } };
 }

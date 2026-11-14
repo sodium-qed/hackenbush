@@ -109,12 +109,12 @@ test('version 1 reproduces complete legacy seeds, colors and move identifiers by
   assert.equal(matrix.digest('hex'), 'c136be62e1744a5ac25f9e191ceb5681038eca40ad8872cdd40857c0aaf2b333');
 });
 
-test('same seed and settings reproduce identifiers, shape, and colors with fresh objects', () => {
+test('version 2 reproduces identifiers, shape, and colors with fresh objects', () => {
   for (const seed of seeds.slice(0, 26)) {
     for (const { size } of settings) {
-      const green = generateBoard(seed, 'green', size);
+      const green = generateBoard(seed, 'green', size, 2);
       for (const variant of ['green', 'redblue', 'mixed']) {
-        const board = generateBoard(seed, variant, size);
+        const board = generateBoard(seed, variant, size, 2);
         const replay = generateBoard(seed, variant, size, 2);
         assert.deepEqual(board, replay);
         assert.deepEqual(board.nodes, green.nodes);
@@ -122,7 +122,7 @@ test('same seed and settings reproduce identifiers, shape, and colors with fresh
           green.edges.map(({ id, a, b }) => [id, a, b]));
         board.edges[0].color = 'changed';
         board.nodes[0].x = -1;
-        assert.deepEqual(generateBoard(seed, variant, size), replay);
+        assert.deepEqual(generateBoard(seed, variant, size, 2), replay);
       }
     }
   }
@@ -138,12 +138,22 @@ test('version 2 seed layouts, colors and edge indices remain replay-compatible',
     }
   }
   assert.equal(matrix.digest('hex'), '7917e6f4d9c5177abafacc916ab278270472fa81ea263b3907f8ae64202b9aa5');
+  const original = createHash('sha256');
+  for (const seed of ['GROVE7', '', '  arbitrary / # ? % =  ', '🌿',
+    ...Array.from({ length: 33 }, (_, i) => 'legacy-' + i)]) {
+    for (const { size } of settings) {
+      for (const variant of ['green', 'redblue', 'mixed']) {
+        original.update(JSON.stringify(generateBoard(seed, variant, size, 2)));
+      }
+    }
+  }
+  assert.equal(original.digest('hex'), 'b9f09c96928137b75ec7a733abb6a422cdb6077100d04a0595973baabe167c09');
 });
 
-test('each network spans the field, stays connected above ground, and has independent supports', () => {
+test('historical version 2 networks remain connected above ground at every original size', () => {
   for (const { size, edges, cycles, supports } of settings) {
     for (const seed of seeds) {
-      const board = generateBoard(seed, 'green', size);
+      const board = generateBoard(seed, 'green', size, 2);
       const label = size + '/' + seed;
       assert.ok(board.edges.length >= edges[0] && board.edges.length <= edges[1], label);
       assert.equal(new Set(board.nodes.map(node => node.id)).size, board.nodes.length, label);
@@ -177,10 +187,10 @@ test('each network spans the field, stays connected above ground, and has indepe
   }
 });
 
-test('segments stay in bounds, remain visibly separated, and have accessible cut points', () => {
+test('version 2 segments retain their original geometry', () => {
   for (const { size } of settings) {
     for (const seed of seeds) {
-      const board = generateBoard(seed, 'green', size);
+      const board = generateBoard(seed, 'green', size, 2);
       const label = size + '/' + seed;
       const points = new Map(board.nodes.map(node => [node.id, node]));
       for (const [index, node] of board.nodes.entries()) {
@@ -206,12 +216,12 @@ test('segments stay in bounds, remain visibly separated, and have accessible cut
   }
 });
 
-test('each player has exclusive cascading cuts and independent quiet support cuts', () => {
+test('version 2 palettes retain their independent and cascading cuts', () => {
   const variants = { green: ['green'], redblue: ['blue', 'red'], mixed: ['blue', 'green', 'red'] };
   for (const seed of seeds) {
     for (const { size } of settings) {
       for (const [variant, palette] of Object.entries(variants)) {
-        const board = generateBoard(seed, variant, size);
+        const board = generateBoard(seed, variant, size, 2);
         const colors = board.edges.map(edge => edge.color);
         assert.deepEqual([...new Set(colors)].sort(), palette);
         if (variant === 'green') continue;
@@ -229,12 +239,12 @@ test('each player has exclusive cascading cuts and independent quiet support cut
   }
 });
 
-test('topologies vary across seeds and support meaningful opening cascades at every size', () => {
+test('version 2 topology and cascades are preserved at every original size', () => {
   for (const { size, cascade, cycles, edges } of settings) {
     const signatures = new Set();
     const counts = new Set();
     for (const seed of seeds) {
-      const board = generateBoard(seed, 'green', size);
+      const board = generateBoard(seed, 'green', size, 2);
       signatures.add(topologySignature(board));
       counts.add(board.edges.length);
       const falls = board.edges.map(edge => extraFalls(board, edge));
@@ -248,15 +258,156 @@ test('topologies vary across seeds and support meaningful opening cascades at ev
   }
 });
 
-test('the opening Grove has three real upper cycles, three roots and a detachable outer crown', () => {
-  const board = generateBoard();
-  assert.deepEqual(board, generateBoard('GROVE7', 'green', 'standard'));
+test('the original version 2 Grove keeps its three cycles, three roots and detachable outer crown', () => {
+  const board = generateBoard('GROVE7', 'green', 'standard', 2);
   assert.equal(board.edges.length, 32);
   assert.equal(board.nodes.filter(node => node.ground).length, 3);
   assert.equal(board.edges.length - board.nodes.length + 1, 3);
   assert.equal(extraFalls(board, board.edges[0]), 0);
   assert.equal(extraFalls(board, board.edges[9]), 2);
   assert.equal(extraFalls(board, board.edges[25]), 4);
+});
+
+const gardenSeeds = ['GROVE7', 'FIELD0', 'c', '🌼', '', '  /% # expert  ',
+  ...Array.from({ length: 64 }, (_, i) => 'botanical-' + i)];
+
+test('every new game uses Expert, reproduces both colors, and has stable replay edge indices', () => {
+  const opening = generateBoard();
+  assert.equal(opening.family, 'Interwoven garden');
+  assert.equal(opening.edges.length, 91);
+  assert.equal(opening.edges.filter(e => e.control).length, 81);
+  for (const size of ['small', 'standard', 'large', 'expert', undefined]) {
+    assert.deepEqual(generateBoard('GROVE7', 'green', size), opening);
+    assert.deepEqual(generateBoard('GROVE7', 'green', size, '3'), opening);
+  }
+  const digest = createHash('sha256');
+  for (const seed of ['GROVE7', 'FIELD0', 'N4X7TM', '🌼', ...'abcdefghijklmnop']) {
+    for (const variant of ['green', 'redblue']) {
+      digest.update(JSON.stringify(generateBoard(seed, variant, 'expert', 3)));
+    }
+  }
+  assert.equal(digest.digest('hex'), '553cfe8a7f005e9b793103a66fb125ccd84748eefe51ec48e3c20dad78170b64');
+  const copy = generateBoard();
+  copy.edges.find(edge => edge.control).control.x = -999;
+  assert.deepEqual(generateBoard(), opening);
+});
+
+test('flowers, tree canopies, root arches and trellises contribute real cycles with shared grounds', () => {
+  const families = new Set();
+  const topologies = new Set();
+  for (const seed of gardenSeeds) {
+    const b = generateBoard(seed, 'green');
+    families.add(b.family);
+    topologies.add(topologySignature(b));
+    assert.ok(b.edges.length >= 82 && b.edges.length <= 100, seed);
+    assert.equal(b.height, 340);
+    assert.equal(b.groundY, 314);
+    assert.equal(components(b).length, 1, seed);
+    assert.ok(b.edges.every(edge => edge.color === 'green'));
+    const roots = b.nodes.filter(n => n.ground);
+    const above = b.nodes.filter(n => !n.ground);
+    assert.ok(roots.length >= 4, seed);
+    assert.ok(roots.every(n => n.y === b.groundY), seed);
+    const lifted = b.edges.filter(e => !roots.some(n => n.id === e.a || n.id === e.b));
+    assert.deepEqual(reachable([above[0].id], lifted), new Set(above.map(n => n.id)), seed);
+    assert.ok(lifted.length - above.length + 1 >= 20, seed);
+    const groups = Object.groupBy(b.edges, edge => edge.part);
+    const contour = id => new Set(groups.petal.filter(e => e.a === id || e.b === id)
+      .map(e => e.a === id ? e.b : e.a));
+    const closedPetals = groups['flower center'].filter(edge => {
+      const from = contour(edge.a);
+      return [...contour(edge.b)].some(id => from.has(id));
+    });
+    assert.ok(closedPetals.length >= 4, seed);
+    for (const name of ['root arch', 'canopy', 'graft']) {
+      assert.ok(groups[name].length > 0);
+      for (const edge of groups[name]) {
+        assert.ok(reachable([edge.a], lifted.filter(other => other !== edge)).has(edge.b), seed + '/' + name);
+      }
+    }
+    assert.ok(above.some(n => groups.lattice.filter(e => e.a === n.id || e.b === n.id).length === 4), seed);
+    assert.ok(groups['root runner'].length >= 6 && groups.graft.length >= 4, seed);
+    assert.ok(Math.max(...groups.stem.map(edge => extraFalls(b, edge))) >= 12, seed);
+    assert.ok(groups['hanging vine'].some(edge => extraFalls(b, edge) > 0), seed);
+    assert.ok(roots.every(root => b.edges.filter(e => e.a === root.id || e.b === root.id)
+      .every(e => extraFalls(b, e) === 0)), seed);
+    const pairs = new Set(b.edges.map(e => [e.a, e.b].sort().join('/')));
+    assert.equal(pairs.size, b.edges.length, seed);
+    b.edges.forEach((edge, index) => assert.equal(edge.id, 'e' + index));
+  }
+  assert.deepEqual([...families].sort(), ['Interwoven garden', 'Orchard grove', 'Vine trellis', 'Wildflower meadow']);
+  assert.ok(topologies.size >= 35);
+});
+
+test('red and blue receive exclusive quiet and cascading moves on the same garden geometry', () => {
+  for (const seed of gardenSeeds) {
+    const green = generateBoard(seed);
+    const colored = generateBoard(seed, 'redblue');
+    assert.deepEqual(colored.nodes, green.nodes);
+    assert.deepEqual(colored.edges.map(e => ({ ...e, color: 'green' })), green.edges);
+    const roots = new Set(colored.nodes.filter(node => node.ground).map(node => node.id));
+    const blue = colored.edges.filter(e => e.color === 'blue').length;
+    assert.ok(Math.abs(blue * 2 - colored.edges.length) <= 1);
+    for (const color of ['blue', 'red']) {
+      const moves = colored.edges.filter(e => e.color === color);
+      assert.ok(moves.some(e => extraFalls(colored, e) > 0), seed);
+      assert.ok(moves.some(e => (roots.has(e.a) || roots.has(e.b)) && extraFalls(colored, e) === 0), seed);
+    }
+  }
+});
+
+function curveSamples(a, control, b) {
+  if (!control) return [a, b];
+  return Array.from({ length: 25 }, (_, index) => {
+    const t = index / 24, s = 1 - t;
+    return { x: s * s * a.x + 2 * s * t * control.x + t * t * b.x,
+      y: s * s * a.y + 2 * s * t * control.y + t * t * b.y };
+  });
+}
+
+test('curved contours stay on the field, expose usable cut points, and meet at shared joints only', () => {
+  for (const seed of gardenSeeds.slice(0, 24)) {
+    const board = generateBoard(seed);
+    const nodes = new Map(board.nodes.map(n => [n.id, n]));
+    for (let i = 0; i < board.nodes.length; i++) {
+      const a = board.nodes[i];
+      for (let j = 0; j < i; j++) {
+        const b = board.nodes[j];
+        assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= 16, seed);
+      }
+    }
+    const paths = board.edges.map(e => {
+      const a = nodes.get(e.a), b = nodes.get(e.b);
+      assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= 18, seed);
+      const points = curveSamples(a, e.control, b);
+      const xx = points.map(p => p.x), yy = points.map(p => p.y);
+      assert.ok(Math.min(...xx) >= 9 && Math.max(...xx) <= 891, seed);
+      assert.ok(Math.min(...yy) >= 11 && Math.max(...yy) <= board.groundY, seed);
+      const midpoint = e.control ? points[12] : { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      return { edge: e, points, midpoint, left: Math.min(...xx), right: Math.max(...xx),
+        top: Math.min(...yy), bottom: Math.max(...yy) };
+    });
+    for (let i = 0; i < paths.length; i++) {
+      const a = paths[i];
+      for (let j = 0; j < i; j++) {
+        const b = paths[j];
+        if (a.left > b.right + 8 || a.right < b.left - 8 || a.top > b.bottom + 8 || a.bottom < b.top - 8) continue;
+        const shared = [a.edge.a, a.edge.b].some(id => b.edge.a === id || b.edge.b === id);
+        for (let m = 1; m < a.points.length; m++) {
+          const p = a.points[m - 1], q = a.points[m];
+          assert.ok(pointToSegment(b.midpoint, p, q) >= 5.7, seed);
+          for (let n = 1; n < b.points.length; n++) {
+            const u = b.points[n - 1], v = b.points[n];
+            assert.ok(!(turn(p, q, u) * turn(p, q, v) < -1e-8 && turn(u, v, p) * turn(u, v, q) < -1e-8), seed);
+            if (!shared) assert.ok(segmentGap(p, q, u, v) >= 6.7, seed);
+          }
+        }
+        for (let n = 1; n < b.points.length; n++) {
+          assert.ok(pointToSegment(a.midpoint, b.points[n - 1], b.points[n]) >= 5.7, seed);
+        }
+      }
+    }
+  }
 });
 
 test('fresh seeds are short, human-shareable, and accepted directly', () => {

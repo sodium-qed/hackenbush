@@ -109,9 +109,15 @@
 
 #guide-dialog .hb-guide-intro {
   max-width: 54ch;
-  margin: 12px 0 18px;
+  margin: 12px 0 5px;
   font-size: 1.02rem;
   line-height: 1.5;
+}
+
+#guide-dialog .hb-guide-clock {
+  margin: 0 0 15px;
+  color: var(--hbg-muted);
+  font-size: .84rem;
 }
 
 #guide-dialog .hb-guide-players {
@@ -130,6 +136,9 @@
   font-size: .88rem;
   line-height: 1.4;
 }
+
+#guide-dialog .hb-guide-players > [hidden] { display: none; }
+#guide-dialog [data-guide="green-rule"] { grid-column: 1 / -1; }
 
 #guide-dialog [data-color="green"] { --hbg-edge: var(--hbg-green); }
 #guide-dialog [data-color="blue"] { --hbg-edge: var(--hbg-blue); }
@@ -155,6 +164,10 @@
   padding-bottom: 3px;
   border-bottom: 1px solid var(--hbg-rule);
   font-size: .88rem;
+}
+
+#guide-dialog .hb-guide-setup + .hb-guide-setup {
+  margin-top: 0;
 }
 
 #guide-dialog .hb-guide-setup summary {
@@ -199,8 +212,10 @@
 
 #guide-dialog .hb-guide-options {
   display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   width: fit-content;
+  max-width: calc(100% - 12px);
   min-width: 0;
   margin: 12px auto 0;
   padding: 2px;
@@ -364,7 +379,7 @@
   #guide-dialog .hb-guide-close:hover,
   #guide-dialog .hb-guide-options label:hover span { background: #e7eadf; }
   #guide-dialog .hb-guide-action:hover { background: #2b422f; }
-  #guide-dialog [data-guide="first-support"]:hover [data-edge] { stroke-width: 6; }
+  #guide-dialog .hb-guide-target:hover [data-edge] { stroke-width: 6; }
 }
 
 @media (max-width: 31rem) {
@@ -372,6 +387,7 @@
   #guide-dialog .hb-guide-sheet { padding: 19px 17px; }
   #guide-dialog .hb-guide-players { grid-template-columns: 1fr; padding: 10px 0; }
   #guide-dialog .hb-guide-practice { margin-top: 20px; }
+  #guide-dialog .hb-guide-options span { padding-inline: 8px; }
   #guide-dialog .hb-guide-action-row { grid-template-columns: 1fr; justify-items: start; }
 }
 

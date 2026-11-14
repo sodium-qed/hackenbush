@@ -3,10 +3,11 @@ import { test } from 'node:test';
 import { generateBoard } from '../dist/js/generator.js';
 import { copyText, decodeTurn, encodeTurn } from '../dist/js/linkplay.js';
 import { cutEdge, initialEdges, legalMoves, otherSide, winner } from '../dist/js/rules.js';
-import { createGame, isHumanTurn, playCut, receiveLink, saveData } from '../dist/js/session.js';
+import { createGame, expireTurn, isHumanTurn, playCut, receiveLink, saveData, startTurnClock } from '../dist/js/session.js';
 
-const options = { seed: 'GROVE7', variant: 'green', difficulty: 'standard' };
+const options = { seed: 'GROVE7', variant: 'green', difficulty: 'expert' };
 const legacyHash = '#turn=1.blue.mixed.small.NTRNRlU1.7.2142c28d';
+const versionTwoHash = '#turn=2.red.mixed.small.NTRNRlU1.0.2.SnVuIPCfjL8.UmVuw6llIC8gSi4.legacy-table_02.c8831ef1';
 const namedPlayers = {
   blue: { name: '李友 🌿', kind: 'human' },
   red: { name: 'Renée / J.', kind: 'human' },
@@ -14,7 +15,8 @@ const namedPlayers = {
 
 function play(settings, limit = Infinity) {
   const firstSide = settings.firstSide ?? 'blue';
-  const boardVersion = settings.boardVersion ?? 2;
+  const boardVersion = settings.boardVersion ?? 3;
+  const timed = settings.timed ?? boardVersion === 3;
   const players = settings.players ?? {
     [firstSide]: { name: 'Player 1', kind: 'human' },
     [otherSide(firstSide)]: { name: 'Player 2', kind: 'human' },
@@ -31,7 +33,7 @@ function play(settings, limit = Infinity) {
     assert.ok(moves.length <= board.edges.length);
   }
   return { ...settings, board, live, moves, side, winner: winner(board, live, side), firstSide,
-    boardVersion, players, matchId: settings.matchId };
+    wireVersion: timed ? 3 : 2, boardVersion, players, matchId: settings.matchId, timed, timedOut: null };
 }
 
 // Construct a deliberately altered but checksum-correct message to exercise replay validation.
@@ -48,19 +50,24 @@ function replaceField(hash, index, value) {
   return `#turn=${payload}.${tag}`;
 }
 
-test('both opening sides can exchange an invitation and their next two cuts in every variant and size', () => {
-  for (const variant of ['green', 'redblue', 'mixed']) {
-    for (const difficulty of ['small', 'standard', 'large']) {
-      for (const firstSide of ['blue', 'red']) {
-        const settings = { seed: 'Grove #4/🪵.é', variant, difficulty, firstSide, players: namedPlayers, matchId: 'invitation_2-z' };
-        for (const count of [0, 1, 2]) {
-          const expected = play(settings, count);
-          const hash = encodeTurn({ ...settings, moves: Object.freeze([...expected.moves]) });
-          assert.match(hash, /^#turn=2\.[A-Za-z0-9._-]+$/);
-          const sharedUrl = new URL(hash, 'http://localhost/username/game/');
-          const decoded = decodeTurn(sharedUrl.hash);
-          assert.deepEqual(decoded, expected);
-          assert.equal(encodeTurn(decoded), hash);
+test('both opening sides can exchange an invitation and two cuts in all new and historical modes', () => {
+  for (const boardVersion of [1, 2, 3]) {
+    const variants = boardVersion === 3 ? ['green', 'redblue'] : ['green', 'redblue', 'mixed'];
+    const sizes = boardVersion === 3 ? ['expert'] : ['small', 'standard', 'large'];
+    for (const variant of variants) {
+      for (const difficulty of sizes) {
+        for (const firstSide of ['blue', 'red']) {
+          const settings = { seed: 'Grove #4/🪵.é', boardVersion, variant, difficulty, firstSide,
+            players: namedPlayers, matchId: 'invitation_2-z' };
+          for (const count of [0, 1, 2]) {
+            const expected = play(settings, count);
+            const hash = encodeTurn({ ...settings, moves: Object.freeze([...expected.moves]) });
+            assert.match(hash, /^#turn=[23]\.[A-Za-z0-9._-]+$/);
+            const sharedUrl = new URL(hash, 'http://localhost/username/game/');
+            const decoded = decodeTurn(sharedUrl.hash);
+            assert.deepEqual(decoded, expected);
+            assert.equal(encodeTurn(decoded), hash);
+          }
         }
       }
     }
@@ -73,6 +80,9 @@ test('the published v1 turn resumes the original board and replies keep that gen
   assert.equal(saved.seed, '54MFU5');
   assert.equal(saved.firstSide, 'blue');
   assert.equal(saved.boardVersion, 1);
+  assert.equal(saved.wireVersion, 1);
+  assert.equal(saved.timed, false);
+  assert.equal(saved.timedOut, null);
   assert.equal(saved.matchId, undefined);
   assert.equal(saved.side, 'red');
   assert.equal(saved.winner, null);
@@ -80,7 +90,17 @@ test('the published v1 turn resumes the original board and replies keep that gen
   assert.deepEqual(saved.moves, ['e7']);
   assert.deepEqual(saved.live, ['e0', 'e1', 'e2', 'e3', 'e4', 'e5', 'e6']);
   assert.deepEqual(saved.board, generateBoard('54MFU5', 'mixed', 'small', 1));
-  assert.deepEqual(decodeTurn(encodeTurn(saved)), saved);
+  assert.equal(encodeTurn(saved), legacyHash);
+  const opened = receiveLink(saved, null).game;
+  assert.equal(encodeTurn(receiveLink(saved, saveData(opened)).game), legacyHash);
+  const renamed = decodeTurn(encodeTurn({ ...saved, players: namedPlayers }));
+  assert.equal(renamed.wireVersion, 2);
+  assert.deepEqual(renamed.players, namedPlayers);
+  const timed = decodeTurn(encodeTurn({ ...saved, timed: true, timedOut: 'red' }));
+  assert.equal(timed.wireVersion, 3);
+  assert.equal(timed.boardVersion, 1);
+  assert.equal(timed.variant, 'mixed');
+  assert.equal(timed.winner, 'blue');
 
   const reply = decodeTurn(encodeTurn({ ...saved, moves: ['e7', 'e5'] }));
   assert.equal(reply.boardVersion, 1);
@@ -92,20 +112,127 @@ test('the published v1 turn resumes the original board and replies keep that gen
   }
 });
 
+test('a published named v2 transfer keeps its original bytes, board, and untimed game', () => {
+  const saved = decodeTurn(versionTwoHash);
+  assert.ok(saved);
+  assert.equal(encodeTurn(saved), versionTwoHash);
+  assert.equal(saved.wireVersion, 2);
+  assert.equal(saved.boardVersion, 2);
+  assert.equal(saved.timed, false);
+  assert.equal(saved.timedOut, null);
+  assert.equal(saved.firstSide, 'red');
+  assert.equal(saved.side, 'blue');
+  assert.equal(saved.players.blue.name, 'Jun 🌿');
+  assert.equal(saved.players.red.name, 'Renée / J.');
+  assert.equal(saved.matchId, 'legacy-table_02');
+  assert.deepEqual(saved.moves, ['e0']);
+  assert.deepEqual(saved.live, Array.from({ length: 13 }, (_, i) => `e${i + 1}`));
+  assert.deepEqual(saved.board, generateBoard('54MFU5', 'mixed', 'small', 2));
+  assert.equal(decodeTurn(replaceField(versionTwoHash, 6, '3')), null);
+  assert.equal(decodeTurn(replaceField(versionTwoHash, 3, 'expert')), null);
+  assert.equal(decodeTurn(replaceField(legacyHash, 3, 'expert')), null);
+});
+
+test('a timed-out side loses on every timed generator without adding a cut or transmitting a deadline', () => {
+  for (const boardVersion of [1, 2, 3]) {
+    const difficulty = boardVersion === 3 ? 'expert' : 'standard';
+    for (const firstSide of ['blue', 'red']) {
+      for (const count of [0, 1, 2]) {
+        const settings = { ...options, difficulty, boardVersion, firstSide, players: namedPlayers, timed: true };
+        const before = play(settings, count);
+        assert.equal(before.winner, null);
+        const hash = encodeTurn({ ...before, timedOut: before.side });
+        assert.ok(hash.startsWith('#turn=3.'));
+        const result = decodeTurn(hash);
+        assert.deepEqual(result, { ...before, timedOut: before.side, winner: otherSide(before.side) });
+        assert.equal(encodeTurn({ ...result, deadline: 1_900_000_000_000 }), hash);
+        assert.equal('deadline' in result, false);
+        assert.equal(encodeTurn(result), hash);
+      }
+    }
+    if (boardVersion < 3) {
+      const old = encodeTurn({ ...options, difficulty, boardVersion, moves: [] });
+      assert.ok(old.startsWith('#turn=2.'));
+      assert.equal(decodeTurn(old).timed, false);
+      assert.throws(() => encodeTurn({ ...options, difficulty, boardVersion, moves: [], timedOut: 'blue' }));
+      assert.throws(() => encodeTurn({ ...options, difficulty: 'expert', boardVersion, timed: true, moves: [] }));
+      const timedOld = encodeTurn({ ...options, difficulty, boardVersion, timed: true, moves: [] });
+      assert.equal(decodeTurn(replaceField(timedOld, 3, 'expert')), null);
+    }
+  }
+});
+
+test('neither a wrong-side timeout nor a timeout after a natural win survives a forged checksum', () => {
+  const settings = { ...options, firstSide: 'red', players: namedPlayers };
+  const one = play(settings, 1);
+  assert.equal(one.side, 'blue');
+  const hash = encodeTurn(one);
+  for (const timedOut of ['red', 'green', 'BLUE', '', [], true]) {
+    assert.throws(() => encodeTurn({ ...one, timedOut }));
+    if (typeof timedOut === 'string' && timedOut !== '') assert.equal(decodeTurn(replaceField(hash, 10, timedOut)), null);
+  }
+  for (const timed of [null, 0, 'true', false]) assert.throws(() => encodeTurn({ ...one, timed }));
+  const finished = play(settings);
+  assert.ok(finished.winner);
+  assert.throws(() => encodeTurn({ ...finished, timedOut: finished.side }));
+  assert.equal(decodeTurn(replaceField(encodeTurn(finished), 10, finished.side)), null);
+});
+
+test('opening an invitation starts its local clock once; a delivered timeout cannot be reopened by an older turn', () => {
+  const settings = { ...options, firstSide: 'red', players: namedPlayers, opponent: 'link', seat: 'blue', matchId: 'clock-table' };
+  const host = createGame(settings);
+  const invite = encodeTurn(host);
+  const arrived = 99_000_000;
+  const visitor = receiveLink(decodeTurn(invite), null, arrived).game;
+  assert.equal(visitor.seat, 'red');
+  assert.equal(visitor.deadline, null);
+  const running = startTurnClock(visitor, arrived);
+  assert.equal(running.deadline, arrived + 10_000);
+  assert.equal(encodeTurn(running), invite);
+  const reopened = receiveLink(decodeTurn(invite), saveData(running), arrived + 9_000).game;
+  assert.equal(reopened.deadline, running.deadline);
+  const expired = expireTurn(reopened, running.deadline);
+  const result = decodeTurn(encodeTurn(expired));
+  assert.equal(result.timedOut, 'red');
+  assert.equal(result.winner, 'blue');
+  assert.deepEqual(result.moves, []);
+  assert.equal(receiveLink(result, null, arrived + 80_000).game.seat, 'blue');
+  const delivered = receiveLink(result, saveData(host), arrived + 80_000).game;
+  assert.equal(delivered.seat, 'blue');
+  assert.equal(delivered.victor, 'blue');
+  assert.equal(delivered.deadline, null);
+
+  const firstCut = legalMoves(visitor.board, visitor.live, visitor.side)[0];
+  const alternate = encodeTurn({ ...visitor, moves: [firstCut] });
+  for (const transfer of [invite, alternate, encodeTurn(expired)]) {
+    const checked = receiveLink(decodeTurn(transfer), saveData(expired), arrived + 90_000).game;
+    assert.equal(checked.timedOut, 'red');
+    assert.equal(checked.victor, 'blue');
+    assert.equal(checked.seat, 'red');
+    assert.equal(checked.deadline, null);
+    assert.deepEqual(checked.moves, []);
+  }
+});
+
 test('two devices keep their seats whether the organizer moves first or sends the opening invitation', () => {
+  const now = 2_000_000;
   for (const firstSide of ['blue', 'red']) {
     for (const seat of ['blue', 'red']) {
       let host = createGame({ ...options, opponent: 'link', firstSide, seat, players: namedPlayers, matchId: `table-${firstSide}-${seat}` });
       assert.equal(isHumanTurn(host), firstSide === seat);
-      if (isHumanTurn(host)) host = playCut(host, legalMoves(host.board, host.live, host.side).at(-1));
-      const visitor = receiveLink(decodeTurn(encodeTurn(host)), null).game;
+      if (isHumanTurn(host)) {
+        host = startTurnClock(host, now);
+        host = playCut(host, legalMoves(host.board, host.live, host.side).at(-1), now + 100);
+      }
+      let visitor = receiveLink(decodeTurn(encodeTurn(host)), null, now + 60_000).game;
       assert.equal(visitor.seat, otherSide(seat));
       assert.equal(isHumanTurn(visitor), true);
       assert.equal(visitor.moves.length, firstSide === seat ? 1 : 0);
       assert.deepEqual(visitor.players, namedPlayers);
-
-      const reply = playCut(visitor, legalMoves(visitor.board, visitor.live, visitor.side).at(-1));
-      const received = receiveLink(decodeTurn(encodeTurn(reply)), saveData(host)).game;
+      assert.equal(visitor.deadline, null);
+      visitor = startTurnClock(visitor, now + 60_000);
+      const reply = playCut(visitor, legalMoves(visitor.board, visitor.live, visitor.side).at(-1), now + 61_000);
+      const received = receiveLink(decodeTurn(encodeTurn(reply)), saveData(host), now + 120_000).game;
       assert.equal(received.seat, seat);
       assert.equal(isHumanTurn(received), true);
       assert.deepEqual(received.moves, reply.moves);
@@ -117,10 +244,14 @@ test('two devices keep their seats whether the organizer moves first or sends th
 
 test('bare encodes use the latest generator, and names and optional match ID survive round trips', () => {
   const basic = decodeTurn(encodeTurn({ ...options, moves: [] }));
-  assert.equal(basic.boardVersion, 2);
+  assert.equal(basic.boardVersion, 3);
+  assert.equal(basic.timed, true);
+  assert.equal(basic.timedOut, null);
+  assert.deepEqual(decodeTurn(encodeTurn({ seed: options.seed, moves: [] })), basic);
   assert.equal(basic.firstSide, 'blue');
   assert.equal(basic.matchId, undefined);
   assert.deepEqual(basic.board, generateBoard(options.seed, options.variant, options.difficulty));
+  assert.notDeepEqual(basic.board, generateBoard(options.seed, 'green', 'standard', 2));
   assert.deepEqual(basic.players, { blue: { name: 'Player 1', kind: 'human' }, red: { name: 'Player 2', kind: 'human' } });
 
   const redFirst = { ...options, firstSide: 'red', moves: [], matchId: 'a'.repeat(64) };
@@ -146,16 +277,17 @@ test('short seeds, UTF-8 byte limits, arbitrary Unicode, and leading BOMs round-
 });
 
 test('a falling edge cannot be encoded or imported as a second deliberate move', () => {
-  const { board, live } = play(options, 0);
+  const fixture = { ...options, boardVersion: 1, difficulty: 'standard' };
+  const { board, live } = play(fixture, 0);
   const edge = board.edges.find(candidate => cutEdge(board, live, candidate.id, 'blue')?.fallen.length);
   assert.ok(edge, 'the fixture should have a cut with a falling branch');
   const result = cutEdge(board, live, edge.id, 'blue');
-  const firstTurn = encodeTurn({ ...options, moves: [edge.id] });
+  const firstTurn = encodeTurn({ ...fixture, moves: [edge.id] });
   const received = decodeTurn(firstTurn);
   assert.deepEqual(received.moves, [edge.id]);
   assert.deepEqual(received.live, result.live);
   const history = [edge.id, result.fallen[0]];
-  assert.throws(() => encodeTurn({ ...options, moves: history }));
+  assert.throws(() => encodeTurn({ ...fixture, moves: history }));
   const ordinals = history.map(id => board.edges.findIndex(entry => entry.id === id).toString(36));
   assert.equal(decodeTurn(replaceField(firstTurn, 5, ordinals.join('-'))), null);
 });
@@ -185,6 +317,7 @@ test('illegal colors, repeated cuts, unknown edges, unsupported settings and ove
   assert.throws(() => encodeTurn({ ...options, moves: Array(257).fill(edge) }));
   assert.throws(() => encodeTurn({ ...options, moves: '0-1' }));
   for (const extra of [{ firstSide: 'purple' }, { boardVersion: 0 }, { boardVersion: '2' },
+    { variant: 'mixed' }, { difficulty: 'small' }, { difficulty: 'standard' }, { difficulty: 'large' },
     { matchId: {} }, { matchId: '' }, { matchId: 'a'.repeat(65) }, { matchId: 'not/an/id' },
     { players: false }, { players: { blue: [] } }, { players: { red: { kind: 'cpu' } } },
     { players: { red: { name: 123 } } }, { players: { blue: { name: 'a'.repeat(257) } } }]) {
@@ -211,11 +344,11 @@ test('corruption, forged metadata, ambiguous representations and malformed seed 
   const nameToken = name => Buffer.from(name, 'utf8').toString('base64url');
   const badInputs = [
     undefined, null, {}, '', '#turn=', `x${hash}`, `${hash}.`, `${hash}%20`, damaged,
-    '#turn=' + 'a'.repeat(3000), replaceField(hash, 0, '3'), replaceField(hash, 0, '1'), replaceField(hash, 1, 'purple'),
-    replaceField(hash, 2, 'purple'), replaceField(hash, 3, 'huge'),
+    '#turn=' + 'a'.repeat(3000), replaceField(hash, 0, '4'), replaceField(hash, 0, '2'), replaceField(hash, 0, '1'), replaceField(hash, 1, 'purple'),
+    replaceField(hash, 2, 'purple'), replaceField(hash, 2, 'mixed'), replaceField(hash, 3, 'huge'), replaceField(hash, 3, 'standard'),
     replaceField(hash, 4, '/w=='), replaceField(hash, 4, '_w'), replaceField(hash, 4, 'YR'),
     replaceField(hash, 4, 'a'), replaceField(hash, 4, excessiveSeed),
-    replaceField(hash, 6, '01'), replaceField(hash, 6, '3'), replaceField(hash, 9, 'a'.repeat(65)),
+    replaceField(hash, 6, '01'), replaceField(hash, 6, '4'), replaceField(hash, 9, 'a'.repeat(65)),
     replaceField(hash, 9, 'bad/id'), replaceField(hash, 9, '?'), replaceField(hash, 7, '_w'),
     ...['', ' Alice', 'Bob\u202e', 'Player\nName', 'A'.repeat(25), '🌿'.repeat(25)].map(name => replaceField(hash, 8, nameToken(name))),
     ...['0-', '-0', '00', '1--2', 'Z', 'zzzzzzz', '1.0', '@', excessiveCuts]

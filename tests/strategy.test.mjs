@@ -207,7 +207,7 @@ function referenceGreenValue(board, live) {
 
 test('Green proves V2 networks and a 70-edge multigraph against independent contraction', () => {
   const boards = ['small', 'standard', 'large'].flatMap(size =>
-    ['GROVE7', 'FORKS', 'TANGLES', 'OWL'].map(seed => generateBoard(seed, 'green', size)));
+    ['GROVE7', 'FORKS', 'TANGLES', 'OWL'].map(seed => generateBoard(seed, 'green', size, 2)));
   const wide = Array.from({ length: 53 }, (_, i) => [i, i + 1, 'green']);
   for (let i = 0; i < 17; i++) wide.push([2 * i + 1, 2 * i + 6, 'green']);
   boards.push(makeBoard(wide, [0, 16, 47]));
@@ -291,14 +291,14 @@ test('large red-blue support bundles agree with an independent count-state minim
 
 test('connected small V2 colored openings agree with exhaustive play', () => {
   for (const variant of ['redblue', 'mixed']) {
-    for (const seed of ['FORKS', '1']) verifyPosition(generateBoard(seed, variant, 'small'));
+    for (const seed of ['FORKS', '1']) verifyPosition(generateBoard(seed, variant, 'small', 2));
   }
 });
 
 test('timed V2 colored choices are legal and expose complete or explicitly unknown outcomes', () => {
   for (const size of ['standard', 'large']) for (const variant of ['redblue', 'mixed']) {
     for (const seed of ['GROVE7', 'TANGLES']) {
-      const board = generateBoard(seed, variant, size);
+      const board = generateBoard(seed, variant, size, 2);
       assert.ok(board.edges.length >= (size === 'large' ? 36 : 24));
       const live = board.edges.map(e => e.id);
       for (const side of ['blue', 'red']) {
