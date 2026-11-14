@@ -129,30 +129,185 @@ test('terminal and bounded search results have distinct outcomes and legal fallb
   const wideIds = wide.edges.map(edge => edge.id);
   const fallback = chooseMove(wide, wideIds, 'red', { budgetMs: 0 });
   assert.ok(oracle(wide).moves(wideIds, 'red').includes(fallback.edgeId));
-  assert.equal(fallback.winning, null);
+  assert.equal(fallback.winning, false);
+  assert.equal(fallback.proven, true);
 
   const lastBit = makeBoard(Array.from({ length: 31 }, (_, i) => [0, i + 1, i === 30 ? 'blue' : 'red']));
   const topBit = chooseMove(lastBit, lastBit.edges.map(edge => edge.id), 'blue');
   assert.deepEqual(topBit, { edgeId: 'e30', proven: true, winning: false });
 });
 
-test('mixed standard openings match exhaustive play for both sides', () => {
+test('legacy mixed standard openings match exhaustive play for both sides', () => {
   for (const seed of ['GROVE7', 'FORKS', 'TANGLES', 'OWL', 'VALLEY', 'YUKON']) {
-    verifyPosition(generateBoard(seed, 'mixed', 'standard'));
+    verifyPosition(generateBoard(seed, 'mixed', 'standard', 1));
   }
 });
 
-test('full standard and large generated boards have proven choices in every variant', () => {
+test('legacy standard and large boards have proven choices in every variant', () => {
   for (const size of ['standard', 'large']) {
     for (const variant of ['green', 'redblue', 'mixed']) {
       for (const seed of ['GROVE7', 'FORKS', 'TANGLES', 'OWL']) {
-        const board = generateBoard(seed, variant, size);
+        const board = generateBoard(seed, variant, size, 1);
         const live = board.edges.map(edge => edge.id);
         for (const side of ['blue', 'red']) {
           const move = chooseMove(board, live, side);
           assert.equal(move.proven, true, [seed, size, variant, side].join(' '));
           assert.ok(oracle(board).moves(live, side).includes(move.edgeId));
         }
+      }
+    }
+  }
+});
+
+// Find bridges independently by removing each edge and checking its endpoints.
+// Contract the other edges with union-find, then evaluate the resulting tree.
+function referenceGreenValue(board, live) {
+  const active = new Set(live);
+  const root = Symbol('ground');
+  const ground = new Set(board.nodes.filter(n => n.ground).map(n => n.id));
+  const normalize = id => ground.has(id) ? root : id;
+  const edges = board.edges.filter(e => active.has(e.id)).map(e => [normalize(e.a), normalize(e.b)]);
+  const parent = new Map();
+  function find(v) {
+    while (parent.has(v)) v = parent.get(v);
+    return v;
+  }
+  const bridges = [];
+  const loops = [];
+  edges.forEach(([a, b], removed) => {
+    const reached = new Set([a]);
+    let size;
+    do {
+      size = reached.size;
+      edges.forEach(([u, v], i) => {
+        if (i === removed) return;
+        if (reached.has(u)) reached.add(v);
+        if (reached.has(v)) reached.add(u);
+      });
+    } while (!reached.has(b) && reached.size !== size);
+    if (reached.has(b)) {
+      const u = find(a), v = find(b);
+      if (u !== v) parent.set(u, v);
+      loops.push(a);
+    } else bridges.push([a, b]);
+  });
+  const parity = new Map();
+  for (const v of loops) parity.set(find(v), (parity.get(find(v)) ?? 0) ^ 1);
+  const collapsed = bridges.map(([a, b]) => [find(a), find(b)]);
+  function value(v, from) {
+    let nim = parity.get(v) ?? 0;
+    for (const [a, b] of collapsed) {
+      if (a === v && b !== from) nim ^= value(b, v) + 1;
+      if (b === v && a !== from) nim ^= value(a, v) + 1;
+    }
+    return nim;
+  }
+  return value(find(root), null);
+}
+
+test('Green proves V2 networks and a 70-edge multigraph against independent contraction', () => {
+  const boards = ['small', 'standard', 'large'].flatMap(size =>
+    ['GROVE7', 'FORKS', 'TANGLES', 'OWL'].map(seed => generateBoard(seed, 'green', size)));
+  const wide = Array.from({ length: 53 }, (_, i) => [i, i + 1, 'green']);
+  for (let i = 0; i < 17; i++) wide.push([2 * i + 1, 2 * i + 6, 'green']);
+  boards.push(makeBoard(wide, [0, 16, 47]));
+  for (const board of boards) {
+    const live = board.edges.map(e => e.id);
+    const win = referenceGreenValue(board, live) !== 0;
+    for (const side of ['blue', 'red']) {
+      const move = chooseMove(board, live, side, { budgetMs: 0 });
+      assert.equal(move.proven, true);
+      assert.equal(move.winning, win);
+      if (win) assert.equal(referenceGreenValue(board, oracle(board).after(live, move.edgeId)), 0);
+    }
+  }
+});
+
+test('the unique immediate win is found on the last edge of a large colored board', () => {
+  for (const side of ['blue', 'red']) {
+    const other = side === 'blue' ? 'red' : 'blue';
+    const edges = [[0, 'spare', side]];
+    for (let i = 1; i <= 45; i++) edges.push([i, i + 1, i % 7 ? other : 'green']);
+    edges.push([0, 1, side]);
+    const board = makeBoard(edges);
+    const live = board.edges.map(e => e.id);
+    assert.deepEqual(chooseMove(board, live, side, { budgetMs: 0 }),
+      { edgeId: 'e46', proven: true, winning: true });
+  }
+});
+
+test('large mixed play preserves a separate support against a one-reply loss', () => {
+  const edges = [[0, 1, 'blue'], [0, 2, 'red']];
+  for (let i = 0; i < 15; i++) edges.push([1, 10 + i, 'red']);
+  for (let i = 0; i < 24; i++) edges.push([2, 30 + i, i === 0 ? 'green' : 'blue']);
+  const board = makeBoard(edges);
+  const live = board.edges.map(e => e.id);
+  const move = chooseMove(board, live, 'blue');
+  assert.notEqual(move.edgeId, 'e0');
+  const referee = oracle(board);
+  const next = referee.after(live, move.edgeId);
+  for (const reply of referee.moves(next, 'red')) assert.ok(referee.moves(referee.after(next, reply), 'blue').length);
+});
+
+test('large red-blue support bundles agree with an independent count-state minimax', () => {
+  function wins(counts, player, memo) {
+    if (!counts[0] && !counts[1]) return false;
+    const key = [player, ...counts].join(',');
+    if (memo.has(key)) return memo.get(key);
+    const canWin = [player, player + 2].some(group => {
+      if (!counts[group]) return false;
+      const next = [...counts];
+      next[group]--;
+      return !wins(next, 1 - player, memo);
+    });
+    memo.set(key, canWin);
+    return canWin;
+  }
+
+  for (const counts of [[19, 18, 3, 2], [10, 22, 2, 10], [18, 18, 2, 2]]) {
+    const edges = [];
+    const groups = [];
+    counts.forEach((size, group) => {
+      for (let i = 0; i < size; i++) {
+        edges.push([group < 2 ? 0 : 1, group < 2 ? 1 : 2, group % 2 ? 'red' : 'blue']);
+        groups.push(group);
+      }
+    });
+    const board = makeBoard(edges);
+    const live = board.edges.map(e => e.id);
+    const memo = new Map();
+    for (const player of [0, 1]) {
+      const move = chooseMove(board, live, player ? 'red' : 'blue', { budgetMs: 600 });
+      assert.equal(move.proven, true);
+      assert.equal(move.winning, wins(counts, player, memo));
+      if (move.winning) {
+        const next = [...counts];
+        next[groups[live.indexOf(move.edgeId)]]--;
+        assert.equal(wins(next, 1 - player, memo), false);
+      }
+    }
+  }
+});
+
+test('connected small V2 colored openings agree with exhaustive play', () => {
+  for (const variant of ['redblue', 'mixed']) {
+    for (const seed of ['FORKS', '1']) verifyPosition(generateBoard(seed, variant, 'small'));
+  }
+});
+
+test('timed V2 colored choices are legal and expose complete or explicitly unknown outcomes', () => {
+  for (const size of ['standard', 'large']) for (const variant of ['redblue', 'mixed']) {
+    for (const seed of ['GROVE7', 'TANGLES']) {
+      const board = generateBoard(seed, variant, size);
+      assert.ok(board.edges.length >= (size === 'large' ? 36 : 24));
+      const live = board.edges.map(e => e.id);
+      for (const side of ['blue', 'red']) {
+        const start = performance.now();
+        const move = chooseMove(board, live, side, { budgetMs: 12 });
+        assert.ok(performance.now() - start < 350, 'a bounded search returned promptly');
+        assert.ok(oracle(board).moves(live, side).includes(move.edgeId));
+        assert.equal(move.proven, typeof move.winning === 'boolean');
+        if (!move.proven) assert.equal(move.winning, null);
       }
     }
   }

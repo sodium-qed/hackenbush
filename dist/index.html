@@ -4,13 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f7f7ef">
-  <meta name="description" content="Play Green or Red–Blue Hackenbush. Cut branches on a fresh puzzle, challenge the computer, or share a game with a friend.">
+  <meta name="description" content="Play Green or Red–Blue Hackenbush. Study the board for two seconds, choose your players and sides, then make the last cut.">
   <title>Hackenbush · Groundwork</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="preload" href="./fonts/instrument-serif.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./style.css">
+  <link rel="stylesheet" href="./style.css?v=2">
   <link rel="stylesheet" href="./board.css">
-  <link rel="stylesheet" href="./guide.css">
+  <link rel="stylesheet" href="./guide.css?v=2">
+  <link rel="stylesheet" href="./players.css?v=2">
 </head>
 <body>
   <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -23,7 +24,8 @@
       <symbol id="i-hint" viewBox="0 0 24 24"><path d="M8.4 15.9c0-1.8-2.5-2.4-2.5-6.2a6.1 6.1 0 1 1 12.2 0c0 3.8-2.5 4.4-2.5 6.2l-.6 1.2H9zM9.7 20h4.6M12 16v-4m-2-2 2 2 2-2"/></symbol>
       <symbol id="i-undo" viewBox="0 0 24 24"><path d="m9 5-5 5 5 5M5 10h9a5.5 5.5 0 0 1 0 11"/></symbol>
       <symbol id="i-restart" viewBox="0 0 24 24"><path d="M4.2 10.1a8.1 8.1 0 1 1 .5 6.4M4 4.8v5.6h5.7"/></symbol>
-      <symbol id="i-edit" viewBox="0 0 24 24"><path d="m5 15-.8 4.8 4.8-.8L19 9l-4-4zM13.4 6.6l4 4"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="2.7"/></symbol>
+      <symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 5 5M7 10h6m-3-3v6"/></symbol>
       <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h3"/></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="m9 15 6-6m-4 6-2 2a4 4 0 0 1-5.6-5.6l3.2-3.2a4 4 0 0 1 5.5 0m.8.7 2-2a4 4 0 0 1 5.6 5.6l-3.2 3.2a4 4 0 0 1-5.5 0"/></symbol>
       <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 5v5h5M3.7 9.4a8.7 8.7 0 1 1 .9 7.4M12 7v5l3.5 2"/></symbol>
@@ -56,65 +58,70 @@
       <div><h1 id="title">Hackenbush</h1>
         <p>Cut a branch. Everything disconnected from the ground falls.<br class="wide-break"> Make the last move to win.</p>
       </div>
-      <button class="primary new-puzzle" type="button" id="new-puzzle"><svg class="icon"><use href="#i-die"/></svg>New puzzle</button>
+      <button class="primary new-game" type="button" id="new-game" hidden><svg class="icon"><use href="#i-die"/></svg>New game</button>
     </section>
-    <div id="game-table" class="table-layout" tabindex="-1">
+    <div id="game-table" class="table-layout" data-phase="ready" tabindex="-1">
       <div class="play-column">
         <section class="board-card panel" aria-label="Game board">
           <div class="board-top">
             <div class="variants" role="group" aria-label="Game variant">
-              <button type="button" class="variant" id="variant-green" aria-pressed="true"><svg class="icon"><use href="#i-branch"/></svg>Green</button>
-              <button type="button" class="variant" id="variant-redblue" aria-pressed="false"><span class="rb-icon" aria-hidden="true"><i></i><i></i></span>Red–Blue</button>
+              <button type="button" class="variant" id="variant-green" aria-pressed="false"><svg class="icon"><use href="#i-branch"/></svg>Green</button>
+              <button type="button" class="variant" id="variant-redblue" aria-pressed="true"><span class="rb-icon" aria-hidden="true"><i></i><i></i></span>Red–Blue</button>
             </div>
-            <button class="seed-button" id="seed-open" type="button" title="View or enter a puzzle seed"><span class="seed-label">Seed</span><strong id="seed-value">······</strong><svg class="icon"><use href="#i-edit"/></svg></button>
+            <span id="board-caption" class="board-caption">Match setup</span>
           </div>
-          <div class="field">
-            <div class="field-head"><div class="small-caption"><svg class="icon"><use href="#i-field"/></svg>Playing field</div><div id="edge-key" class="edge-key"></div></div>
-            <div id="board"></div>
+          <div id="ready-view" class="ready-view">
+            <div class="ready-copy">
+              <h2>Before the first cut</h2>
+              <p>Study the board for two seconds. Once it’s hidden, choose the players and who goes first.</p>
+              <div class="opening-actions"><button type="button" class="primary" id="reveal"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg>Reveal board</button><button type="button" id="resume" class="resume" hidden>Back to current game</button></div>
+            </div>
+            <svg class="opening-clock" viewBox="0 0 180 180" aria-hidden="true" fill="none">
+              <g stroke="currentColor" stroke-linecap="round"><path d="M81 19h18m-14-5h10v5H85zM90 20v8m40 8 7-7m-2-2 5 5" stroke-width="2.2"/>
+              <circle cx="90" cy="94" r="63" stroke-width="1.4"/><circle cx="90" cy="94" r="56" stroke-dasharray="1 6.4" stroke-width="4"/>
+              <path d="M90 44a50 50 0 0 1 42 22" stroke="#5981a2" stroke-width="4"/><path d="M135 72a50 50 0 0 1 5 22" stroke="#b56a50" stroke-width="4"/>
+              <path d="m90 56 .3 6m36.7 31 7 .2m-44.3 37 .3 7m-38-44.2 6 .2" stroke-width="2"/>
+              </g><text x="87" y="109" text-anchor="middle" fill="currentColor" font-family="Georgia,serif" font-size="44" letter-spacing="-4">2<tspan font-size="23" dx="3">s</tspan></text>
+            </svg>
           </div>
-          <div class="board-tools">
+          <div id="players-view" tabindex="-1" hidden></div>
+          <div class="field" id="field" hidden>
+            <div class="field-head"><div class="small-caption"><svg class="icon" aria-hidden="true"><use href="#i-field"/></svg><span id="field-label">Playing field</span></div><div id="edge-key" class="edge-key"></div></div>
+            <div class="board-scroll" id="board-scroll" tabindex="-1"><div id="board"></div></div>
+          </div>
+          <div class="board-tools" id="board-tools" hidden>
             <button id="hint" type="button" class="tool-action"><svg class="icon"><use href="#i-hint"/></svg>Hint</button>
             <button id="undo" type="button" class="tool-action" disabled><svg class="icon"><use href="#i-undo"/></svg>Undo</button>
-            <button id="restart" type="button" class="tool-action restart" disabled><svg class="icon"><use href="#i-restart"/></svg>Restart</button>
+            <button id="zoom" type="button" class="tool-action zoom" aria-pressed="false"><svg class="icon"><use href="#i-zoom"/></svg><span>Zoom board</span></button>
+            <button id="restart" type="button" class="tool-action restart"><svg class="icon"><use href="#i-restart"/></svg>Rematch</button>
           </div>
           <p class="board-feedback" id="board-feedback" role="status" hidden></p>
         </section>
-        <section class="panel history-panel" aria-labelledby="history-title">
-          <div class="section-top"><h2 id="history-title">Move history</h2><span id="history-count" class="history-count">0 moves</span></div>
-          <div id="history-content">
-            <div class="empty-history"><svg class="icon"><use href="#i-history"/></svg><span>Your cuts will appear here.</span></div>
-          </div>
-        </section>
+        <details id="history-panel" class="panel history-panel" hidden>
+          <summary class="section-top"><span class="history-title">Move history</span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></summary>
+          <div id="history-content"></div>
+        </details>
       </div>
       <aside class="side-column" aria-label="Match controls">
         <section class="turn-card" id="turn-card" aria-labelledby="turn-name">
-          <div class="turn-top"><div><div class="turn-label"><i></i><span id="turn-label">Current turn</span></div><h2 id="turn-name">Player 1</h2></div>
+          <div class="turn-top"><div><div class="turn-label"><i></i><span id="turn-label">Game rules</span></div><h2 id="turn-name">Red–Blue</h2></div>
             <svg class="seat-mark" id="seat-mark" viewBox="0 0 80 80" fill="none" aria-hidden="true"><circle class="seat-outer" cx="40" cy="40" r="34"/><circle class="seat-inner" cx="40" cy="40" r="28"/><g class="seat-branch" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.1"><path d="M28 54h24m-14 0V33l-9-7m9 17 12-11m-7 6V24"/><circle cx="28.5" cy="25.5" r="2.5"/><circle cx="43" cy="23" r="2.5"/><circle cx="51" cy="31" r="2.5"/></g><svg class="winner-mark" x="24" y="23" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-trophy"/></svg><g class="seat-stars" fill="currentColor"><circle cx="40" cy="6" r="1.6"/><circle cx="74" cy="40" r="1.6"/><circle cx="40" cy="74" r="1.6"/><circle cx="6" cy="40" r="1.6"/></g></svg>
           </div>
-          <p id="turn-help">Choose any green branch to cut.</p>
+          <p id="turn-help">Each player cuts branches of their own color. Either color can go first.</p>
           <button type="button" class="turn-share" id="share-turn" hidden><svg class="icon"><use href="#i-link"/></svg><span>Share turn link</span></button>
-          <div class="turn-stats"><div><span>Branches left</span><strong id="branch-count">–</strong></div><div><span>Legal cuts</span><strong id="legal-count">–</strong></div></div>
         </section>
-        <section class="panel setup-panel" aria-labelledby="setup-title">
-          <div class="section-top"><h2 id="setup-title">Match setup</h2><svg class="icon section-icon"><use href="#i-sliders"/></svg></div>
-          <div class="setting"><label for="opponent">Play with</label><div class="select-wrap"><svg class="icon leading"><use href="#i-people"/></svg><select id="opponent"><option value="local">Two players · same device</option><option value="computer">Computer opponent</option><option value="link">Two devices · turn links</option></select><svg class="icon chevron"><use href="#i-chevron"/></svg></div></div>
-          <div class="setting"><label for="difficulty">Board size</label><div class="select-wrap"><svg class="icon leading"><use href="#i-size"/></svg><select id="difficulty"><option value="small">Small</option><option value="standard" selected>Standard</option><option value="large">Large</option></select><svg class="icon chevron"><use href="#i-chevron"/></svg></div></div>
+        <section class="panel setup-panel" id="setup-panel" aria-labelledby="setup-title">
+          <div class="section-top"><h2 id="setup-title">Board settings</h2><svg class="icon section-icon"><use href="#i-sliders"/></svg></div>
+          <div id="settings-fields"><div class="setting"><label for="difficulty">Board size</label><div class="select-wrap"><svg class="icon leading"><use href="#i-size"/></svg><select id="difficulty"><option value="small">Small</option><option value="standard" selected>Standard</option><option value="large">Large</option></select><svg class="icon chevron"><use href="#i-chevron"/></svg></div></div>
           <label class="toggle-row" id="mixed-row" hidden><span>Shared green branches</span><input type="checkbox" id="mixed-toggle"><span class="switch" aria-hidden="true"></span></label>
+          </div>
+          <ol id="match-players" class="match-players" aria-label="Players in turn order" hidden></ol>
           <div id="link-area" hidden><p id="link-explain"></p></div>
         </section>
       </aside>
     </div>
   </main>
   <dialog id="guide-dialog"></dialog>
-  <dialog id="seed-dialog" class="form-dialog" aria-labelledby="seed-title">
-    <div class="dialog-inner"><div class="dialog-heading"><h2 id="seed-title">Puzzle seed</h2><button class="icon-button" data-close type="button" aria-label="Close seed dialog"><svg class="icon"><use href="#i-close"/></svg></button></div>
-      <p>Use the same seed, variant, and board size to play the same opening.</p>
-      <form id="seed-form"><label for="seed-input">Seed</label><input id="seed-input" class="seed-input" type="text" maxlength="48" required autocomplete="off" autocapitalize="characters" spellcheck="false">
-        <div class="dialog-actions"><button type="button" id="copy-seed" class="secondary"><svg class="icon"><use href="#i-copy"/></svg>Copy seed</button><button type="submit" class="primary">Play seed<svg class="icon"><use href="#i-arrow"/></svg></button></div>
-        <p class="dialog-note" id="seed-note" aria-live="polite"></p>
-      </form>
-    </div>
-  </dialog>
   <dialog id="share-dialog" class="form-dialog" aria-labelledby="share-title">
     <div class="dialog-inner"><div class="dialog-heading"><h2 id="share-title">Share this turn</h2><button class="icon-button" data-close type="button" aria-label="Close share dialog"><svg class="icon"><use href="#i-close"/></svg></button></div>
       <p id="share-description"></p><label for="share-url">Game link</label><input id="share-url" type="url" readonly>
@@ -123,6 +130,17 @@
   </dialog>
   <div class="sr-only" id="announcer" role="status" aria-live="polite" aria-atomic="true"></div>
   <noscript>Enable JavaScript to play Hackenbush.</noscript>
-  <script type="module" src="./js/app.js"></script>
+  <script type="importmap">
+    { "imports": {
+      "./js/generator.js": "./js/generator.js?v=2",
+      "./js/guide.js": "./js/guide.js?v=2",
+      "./js/linkplay.js": "./js/linkplay.js?v=2",
+      "./js/players.js": "./js/players.js?v=2",
+      "./js/preview.js": "./js/preview.js?v=2",
+      "./js/session.js": "./js/session.js?v=2",
+      "./js/strategy.js": "./js/strategy.js?v=2"
+    } }
+  </script>
+  <script type="module" src="./js/app.js?v=2"></script>
 </body>
 </html>

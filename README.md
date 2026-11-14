@@ -2,19 +2,25 @@
 
 **[Play Hackenbush in your browser](https://sodium-qed.github.io/hackenbush/)**
 
-Play **Green Hackenbush** or **Red–Blue Hackenbush** on a randomly generated graph. In Red–Blue, turn on shared green branches to play with all three colors.
+Play **Green Hackenbush** or **Red–Blue Hackenbush** on a randomly generated board. Take turns cutting one branch. If you start a turn with no legal cut, you lose, even if the other player still has branches.
 
-Cut one branch on your turn. Every branch that loses its connection to the ground falls, while a branch with a second path to the ground stays. The first player who cannot cut loses, even if the other player's branches are still standing.
+![A Hackenbush match on a board with red, blue, and green branches](media/hackenbush-table.jpg)
 
-![The three-color Hackenbush board, showing four grounded figures and Blue to move](media/hackenbush-table.jpg)
+## Start a match
 
-## Play
+1. Choose the board size and rules. In Green, either player can cut any branch. In Red–Blue, each player cuts their own color. Turn on shared green branches to play with all three colors.
+2. Press **Reveal board** when both players are ready. Study the board for two seconds. It stays hidden while you assign seats.
+3. Give each player a nickname and choose a human or computer for each seat. Player 1 moves first and Player 2 moves second. In a game with red and blue branches, choose which color Player 1 takes.
 
-- **Two players** share a screen and take turns.
-- **Vs. computer** gives you the first move against a computer opponent.
-- **Turn links** let two people play on different devices. Make one move, copy the resulting link, and send it to the other player. Each link carries the puzzle and move history. Send the final link to share the result.
+## Make a cut
 
-Use **New puzzle** for another board, or open the seed control to replay a particular position. The interactive field guide includes a practice cut. The board works with a mouse, touch, and keyboard.
+Click or tap a branch. On a keyboard, tab to the board, use the arrow keys to select a branch, and press Enter or Space to cut it. Every branch that loses its path to the ground falls. A branch with another path stays, even when that path uses the other player's color.
+
+Open **How to play** to try the same cut with one support and then two. Choose **Rematch** to preview the same board again and pick seats for another game.
+
+## Play on two devices
+
+Choose turn links and pick your seat. If you take Player 1, make the first cut and send the resulting link to Player 2. To go second, take Player 2 and send Player 1 the opening link. After each cut, send the new link back. Each link carries the board, both nicknames and roles, the turn order, and the move history. The final link shares the result.
 
 ## Run locally
 

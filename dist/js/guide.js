@@ -52,6 +52,17 @@ const sheet = `
     </div>
     <p data-guide="variant-note" class="hb-guide-variant"></p>
 
+    <details class="hb-guide-setup">
+      <summary>Starting a match</summary>
+      <ol>
+        <li>Choose the board and rules. The full board appears for two seconds.</li>
+        <li>While the board is hidden, enter both nicknames and choose a human or computer for each seat.
+          Player 1 moves first, then Player 2. If the game has red and blue branches, choose Player 1’s color.</li>
+      </ol>
+      <p>On two devices, send a turn link after each move. To go second, take Player 2 and send
+        Player 1 the opening link. The links carry both players’ nicknames, roles and turn order.</p>
+    </details>
+
     <section class="hb-guide-practice" aria-labelledby="hb-guide-practice-title">
       <h3 id="hb-guide-practice-title">Which branches fall?</h3>
       <p>A branch stays if it still has a path to the ground. That path can follow branches of any color.</p>
@@ -136,8 +147,7 @@ export function createGuide(dialog) {
     second.classList.toggle('hb-guide-gone', !two);
     for (const edge of edges) edge.dataset.color = colors[edge.dataset.edge];
     action.textContent = 'Cut marked branch';
-    const player = colors === examples.green ? 'Player 1' : 'Blue';
-    feedback.textContent = `${player} to move. Try the marked cut.`;
+    feedback.textContent = 'Will the upper branches stay after this cut?';
     description.textContent = two
       ? 'Two upper branches meet at a fork. Two supports connect the fork to the ground. The left support is marked.'
       : 'Two upper branches meet at a fork. One marked support connects the fork to the ground.';

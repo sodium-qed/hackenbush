@@ -150,6 +150,37 @@
   font-size: .82rem;
 }
 
+#guide-dialog .hb-guide-setup {
+  margin-top: 9px;
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--hbg-rule);
+  font-size: .88rem;
+}
+
+#guide-dialog .hb-guide-setup summary {
+  padding: 8px 0;
+  color: #314d38;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#guide-dialog .hb-guide-setup summary::marker {
+  font-size: .8em;
+}
+
+#guide-dialog .hb-guide-setup ol {
+  margin: 2px 0 10px;
+  padding-inline-start: 1.4em;
+}
+
+#guide-dialog .hb-guide-setup li + li {
+  margin-top: 5px;
+}
+
+#guide-dialog .hb-guide-setup p {
+  margin: 0 0 11px;
+}
+
 #guide-dialog .hb-guide-practice {
   margin: 24px 0 0;
 }
@@ -323,6 +354,7 @@
 }
 
 #guide-dialog button:focus-visible,
+#guide-dialog .hb-guide-setup summary:focus-visible,
 #guide-dialog .hb-guide-options input:focus-visible + span {
   outline: 2px solid #355b43;
   outline-offset: 3px;
