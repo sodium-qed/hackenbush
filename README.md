@@ -1,8 +1,12 @@
 # Hackenbush
 
+**[Play Hackenbush in your browser](https://sodium-qed.github.io/hackenbush/)**
+
 Play **Green Hackenbush** or **Red–Blue Hackenbush** on a randomly generated graph. In Red–Blue, turn on shared green branches to play with all three colors.
 
 Cut one branch on your turn. Every branch that loses its connection to the ground falls, while a branch with a second path to the ground stays. The first player who cannot cut loses, even if the other player's branches are still standing.
+
+![The three-color Hackenbush board, showing four grounded figures and Blue to move](media/hackenbush-table.jpg)
 
 ## Play
 
