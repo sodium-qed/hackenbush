@@ -22,20 +22,91 @@ function between(a, b, t) {
   return { x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t };
 }
 
-function crossbars(a, b, color) {
-  if (color === 'green') return '';
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const length = Math.hypot(dx, dy);
-  if (!length) return '';
-  const tx = dx / length;
-  const ty = dy / length;
-  const center = between(a, b, 0.5);
-  const offsets = color === 'blue' ? [-2.15, 2.15] : [0];
+function pathFor(a, b, control) {
+  return control ? `M${a.x},${a.y}Q${control.x},${control.y} ${b.x},${b.y}` : linePath(a, b);
+}
+
+function pointAt({ a, b, control }, t) {
+  if (!control) return between(a, b, t);
+  return between(between(a, control, t), between(control, b, t), t);
+}
+
+function tangentAt({ a, b, control }, t) {
+  if (!control) return { x: b.x - a.x, y: b.y - a.y };
+  return {
+    x: 2 * ((1 - t) * (control.x - a.x) + t * (b.x - control.x)),
+    y: 2 * ((1 - t) * (control.y - a.y) + t * (b.y - control.y))
+  };
+}
+
+function extent(a, b, control) {
+  let low = Math.min(a, b);
+  let high = Math.max(a, b);
+  if (control !== undefined) {
+    const t = (a - control) / (a - 2 * control + b);
+    if (t > 0 && t < 1) {
+      const at = (1 - t) ** 2 * a + 2 * (1 - t) * t * control + t ** 2 * b;
+      low = Math.min(low, at);
+      high = Math.max(high, at);
+    }
+  }
+  return [low, high];
+}
+
+// A quadratic's maximum deviation from its chord is bounded by its
+// midpoint offset. Splitting it into n equal intervals divides that bound
+// by n². Cache a subpixel polyline for picking and distances along the ink.
+function traceBranch(a, b, control) {
+  const chord = between(a, b, 0.5);
+  const bend = control ? Math.hypot(control.x - chord.x, control.y - chord.y) / 2 : 0;
+  const count = Math.max(1, Math.ceil(Math.sqrt(bend / 0.18)));
+  const shape = { a, b, control, path: pathFor(a, b, control), samples: [{ ...a, t: 0, along: 0 }], length: 0 };
+  for (let i = 1; i <= count; i++) {
+    const t = i / count;
+    const point = pointAt(shape, t);
+    const previous = shape.samples[i - 1];
+    shape.length += Math.hypot(point.x - previous.x, point.y - previous.y);
+    shape.samples.push({ ...point, t, along: shape.length });
+  }
+  [shape.left, shape.right] = extent(a.x, b.x, control?.x);
+  [shape.top, shape.bottom] = extent(a.y, b.y, control?.y);
+  return shape;
+}
+
+function parameterAtLength(shape, distance) {
+  const at = Math.min(shape.length, Math.max(0, distance));
+  for (let i = 1; i < shape.samples.length; i++) {
+    const sample = shape.samples[i];
+    if (at > sample.along) continue;
+    const prev = shape.samples[i - 1];
+    const part = (at - prev.along) / (sample.along - prev.along || 1);
+    return prev.t + (sample.t - prev.t) * part;
+  }
+  return 1;
+}
+
+function slicePath(shape, from, to) {
+  const a = pointAt(shape, from);
+  const b = pointAt(shape, to);
+  if (!shape.control) return linePath(a, b);
+  // Exact quadratic subcurve, using the derivative at its new start.
+  const tangent = tangentAt(shape, from);
+  const scale = (to - from) / 2;
+  return pathFor(a, b, { x: a.x + tangent.x * scale, y: a.y + tangent.y * scale });
+}
+
+function crossbars(shape, color, halfWidth) {
+  if (color === 'green' || !shape.length) return '';
+  const spacing = Math.min(2.15, shape.length * 0.14);
+  const offsets = color === 'blue' ? [-spacing, spacing] : [0];
   return offsets.map(offset => {
-    const x = center.x + tx * offset;
-    const y = center.y + ty * offset;
-    return linePath({ x: x + ty * 1.75, y: y - tx * 1.75 }, { x: x - ty * 1.75, y: y + tx * 1.75 });
+    const t = parameterAtLength(shape, shape.length / 2 + offset);
+    const p = pointAt(shape, t);
+    const tangent = tangentAt(shape, t);
+    const length = Math.hypot(tangent.x, tangent.y) || 1;
+    const x = -tangent.y / length * halfWidth;
+    const y = tangent.x / length * halfWidth;
+    return linePath({ x: p.x - x, y: p.y - y }, { x: p.x + x, y: p.y + y });
   }).join('');
 }
 
@@ -76,7 +147,7 @@ function components(edges) {
 
 function branchSpans(edges, nodes) {
   const ranges = components(edges).map(piece => {
-    const xs = piece.flatMap(edge => [nodes.get(edge.a).x, nodes.get(edge.b).x]);
+    const xs = piece.flatMap(edge => extent(nodes.get(edge.a).x, nodes.get(edge.b).x, edge.control?.x));
     return [Math.min(...xs), Math.max(...xs)];
   }).sort((a, b) => a[0] - b[0]);
   const merged = [];
@@ -91,20 +162,22 @@ function branchSpans(edges, nodes) {
 // Compress empty space between separate figures first. The original full
 // board, including branches already cut, determines this projection.
 function horizontalProjection(width, spans) {
-  if (Math.abs(width - WIDTH) < 0.05) return x => x;
+  const ratio = width / WIDTH;
+  const uniform = { x: x => x * ratio, scale: ratio };
+  if (Math.abs(width - WIDTH) < 0.05) return uniform;
   const occupied = spans.reduce((total, [left, right]) => total + right - left, 0);
   const blank = WIDTH - occupied;
-  const ratio = width / WIDTH;
-  if (!occupied || !blank || ratio >= 1) return x => x * ratio;
+  if (!occupied || blank <= 0 || ratio >= 1) return uniform;
   const occupiedScale = Math.min(1, (width - blank * ratio * ratio) / occupied);
   const blankScale = (width - occupied * occupiedScale) / blank;
-  return x => {
+  function project(x) {
     let before = 0;
     for (const [left, right] of spans) {
       before += Math.max(0, Math.min(x, right) - left);
     }
     return before * occupiedScale + (x - before) * blankScale;
-  };
+  }
+  return { x: project, scale: occupiedScale };
 }
 
 function addScissors() {
@@ -122,13 +195,22 @@ function addScissors() {
   return mark;
 }
 
-function distanceToEdge(point, a, b) {
-  const dx = b.x - a.x;
-  const dy = b.y - a.y;
-  const squared = dx * dx + dy * dy;
-  const t = squared ? Math.min(1, Math.max(0, ((point.x - a.x) * dx + (point.y - a.y) * dy) / squared)) : 0;
-  const closest = between(a, b, t);
-  return { distance: Math.hypot(point.x - closest.x, point.y - closest.y), interior: Math.min(t, 1 - t) * Math.sqrt(squared) };
+function distanceToEdge(point, shape) {
+  let bestSquared = Infinity;
+  let along = 0;
+  for (let i = 1; i < shape.samples.length; i++) {
+    const a = shape.samples[i - 1];
+    const b = shape.samples[i];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const squared = dx * dx + dy * dy;
+    const t = squared ? Math.min(1, Math.max(0, ((point.x - a.x) * dx + (point.y - a.y) * dy) / squared)) : 0;
+    const distance = (point.x - a.x - t * dx) ** 2 + (point.y - a.y - t * dy) ** 2;
+    if (distance >= bestSquared) continue;
+    bestSquared = distance;
+    along = a.along + t * (b.along - a.along);
+  }
+  return { distance: Math.sqrt(bestSquared), interior: Math.min(along, shape.length - along) };
 }
 
 export function createBoard(container, { onCut } = {}) {
@@ -145,16 +227,20 @@ export function createBoard(container, { onCut } = {}) {
   const dots = svgElement('pattern', { id: `${prefix}-dots`, width: 16, height: 16, patternUnits: 'userSpaceOnUse' });
   dots.append(svgElement('circle', { class: 'hb-field__dot', cx: 8, cy: 8, r: 0.79 }));
   const hatching = svgElement('pattern', {
-    id: `${prefix}-hatching`, width: 10, height: 7, patternUnits: 'userSpaceOnUse',
+    id: `${prefix}-hatching`, width: 16, height: 9, patternUnits: 'userSpaceOnUse',
     patternTransform: `translate(0 ${GROUND})`
   });
-  hatching.append(svgElement('path', { class: 'hb-field__etch', d: 'M-4,6L2,0M6,6L12,0' }));
-  defs.append(dots, hatching);
+  hatching.append(svgElement('path', { class: 'hb-field__etch', d: 'M-3,7L3,0M8,4L11.5,0M13,7L19,0' }));
+  const soil = svgElement('linearGradient', { id: `${prefix}-soil`, x1: 0, x2: 0, y1: 0, y2: 1 });
+  soil.append(svgElement('stop', { offset: '0%', 'stop-color': '#76855b', 'stop-opacity': 0.14 }));
+  soil.append(svgElement('stop', { offset: '100%', 'stop-color': '#76855b', 'stop-opacity': 0 }));
+  defs.append(dots, hatching, soil);
   const grid = svgElement('rect', { x: 0, y: 0, width: '100%', height: '100%', fill: `url(#${prefix}-dots)`, 'aria-hidden': true });
   const ground = svgElement('g', { 'aria-hidden': true, class: 'hb-field__ground' });
   const groundLine = svgElement('path', { class: 'hb-field__ground-line' });
-  const groundTicks = svgElement('rect', { y: GROUND + 0.3, height: 6.2, fill: `url(#${prefix}-hatching)` });
-  ground.append(groundTicks, groundLine);
+  const groundWash = svgElement('rect', { height: 13, fill: `url(#${prefix}-soil)` });
+  const groundTicks = svgElement('rect', { height: 7.1, fill: `url(#${prefix}-hatching)` });
+  ground.append(groundWash, groundTicks, groundLine);
   const branches = svgElement('g');
   const joints = svgElement('g', { class: 'hb-field__joints', 'aria-hidden': true });
   const effects = svgElement('g', { class: 'hb-field__effects', 'aria-hidden': true });
@@ -174,6 +260,9 @@ export function createBoard(container, { onCut } = {}) {
   let keyboardFocus = false;
   let press = null;
   let width = WIDTH;
+  let height = HEIGHT;
+  let groundY = GROUND;
+  let dense = false;
   let spans = [];
   let incident = new Map();
   const nodes = new Map();
@@ -196,7 +285,7 @@ export function createBoard(container, { onCut } = {}) {
     hover = focused = roving = null;
     press = null;
     for (const node of next.nodes) {
-      const dot = svgElement('circle', { class: 'hb-field__joint', r: node.ground ? 4.2 : 3.75 });
+      const dot = svgElement('circle', { class: 'hb-field__joint' });
       joints.append(dot);
       nodes.set(node.id, { ...node, dot, at: null });
     }
@@ -208,6 +297,7 @@ export function createBoard(container, { onCut } = {}) {
       const hit = svgElement('path', { class: 'hb-field__hit' });
       const halo = svgElement('path', { class: 'hb-field__halo' });
       const stem = svgElement('path', { class: 'hb-field__stem' });
+      stem.classList.toggle('hb-field__stem--support', ['root', 'stem', 'trunk', 'trellis post'].includes(edge.part));
       const stripes = svgElement('path', { class: 'hb-field__stripes' });
       group.append(hit, halo, stem, stripes);
       branches.append(group);
@@ -215,27 +305,47 @@ export function createBoard(container, { onCut } = {}) {
     }
     incident = incidence([...edges.values()]);
     spans = branchSpans([...edges.values()], nodes);
+    dense = next.edges.length >= 40;
+    frame.classList.toggle('hb-field--dense', dense);
+    for (const [id, node] of nodes) {
+      const junction = (incident.get(id)?.length ?? 0) > 2;
+      const radius = node.ground ? 4.3 : junction ? 3.95 : 3.35;
+      node.dot.setAttribute('r', radius - (dense && !node.ground ? 0.55 : 0));
+      node.dot.classList.toggle('hb-field__joint--root', !!node.ground);
+    }
   }
 
   function geometry() {
     const project = horizontalProjection(width, spans);
     const margin = Math.min(17, width * 0.018);
-    groundLine.setAttribute('d', `M${margin},${GROUND}H${width - margin}`);
-    groundTicks.setAttribute('x', margin);
-    groundTicks.setAttribute('width', width - 2 * margin);
+    groundLine.setAttribute('d', `M${margin},${groundY}H${width - margin}`);
+    hatching.setAttribute('patternTransform', `translate(0 ${groundY})`);
+    for (const strip of [groundWash, groundTicks]) {
+      strip.setAttribute('x', margin);
+      strip.setAttribute('y', groundY + 0.3);
+      strip.setAttribute('width', width - 2 * margin);
+    }
     for (const node of nodes.values()) {
-      node.at = { x: project(node.x), y: node.y };
+      node.at = { x: project.x(node.x), y: node.y };
       node.dot.setAttribute('cx', node.at.x);
       node.dot.setAttribute('cy', node.at.y);
     }
     for (const edge of edges.values()) {
-      const a = nodes.get(edge.a).at;
+      const anchor = nodes.get(edge.a);
+      const a = anchor.at;
       const b = nodes.get(edge.b).at;
-      edge.center = between(a, b, 0.5);
-      const path = linePath(a, b);
-      for (const part of [edge.hit, edge.halo, edge.stem]) part.setAttribute('d', path);
-      edge.stripes.setAttribute('d', crossbars(a, b, edge.color));
-      let angle = Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI;
+      // A control point can extend past the actual petal into the gap
+      // next door. Apply the same affine map as the rest of this figure.
+      const control = edge.control && {
+        x: a.x + (edge.control.x - anchor.x) * project.scale, y: edge.control.y
+      };
+      edge.shape = traceBranch(a, b, control);
+      const middle = parameterAtLength(edge.shape, edge.shape.length / 2);
+      edge.center = pointAt(edge.shape, middle);
+      const tangent = tangentAt(edge.shape, middle);
+      for (const part of [edge.hit, edge.halo, edge.stem]) part.setAttribute('d', edge.shape.path);
+      edge.stripes.setAttribute('d', crossbars(edge.shape, edge.color, dense ? 1.5 : 1.8));
+      let angle = Math.atan2(tangent.y, tangent.x) * 180 / Math.PI;
       if (angle >= 90) angle -= 180;
       if (angle < -90) angle += 180;
       edge.angle = angle;
@@ -255,6 +365,7 @@ export function createBoard(container, { onCut } = {}) {
     for (const [id, node] of nodes) {
       const losesSupport = remaining && !node.ground && !incident.get(id)?.some(adjacent => remaining.has(adjacent.id));
       node.dot.classList.toggle('hb-field__joint--falling', !!losesSupport);
+      node.dot.classList.toggle('hb-field__joint--target', !!edge && (edge.a === id || edge.b === id));
     }
     svg.classList.toggle('hb-field__svg--cuttable', !!hover && !!edge);
     if (edge) {
@@ -265,12 +376,12 @@ export function createBoard(container, { onCut } = {}) {
     }
   }
 
-  function fit() {
+  function fit(force = false) {
     const box = frame.getBoundingClientRect();
-    const fitted = box.width > 0 && box.height > 0 ? Math.round(box.width * HEIGHT / box.height * 100) / 100 : WIDTH;
-    if (Math.abs(fitted - width) < 0.05) return;
+    const fitted = box.width > 0 && box.height > 0 ? Math.round(box.width * height / box.height * 100) / 100 : WIDTH;
+    if (!force && Math.abs(fitted - width) < 0.05) return;
     width = fitted;
-    svg.setAttribute('viewBox', `0 0 ${width} ${HEIGHT}`);
+    svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     clearEffects();
     geometry();
     preview();
@@ -284,12 +395,16 @@ export function createBoard(container, { onCut } = {}) {
     if (!cut && !fallen.length) return;
     const batch = svgElement('g');
     if (cut) {
-      const a = nodes.get(cut.a).at;
-      const b = nodes.get(cut.b).at;
-      for (const [start, end, sign] of [[a, between(a, b, 0.47), -1], [between(a, b, 0.53), b, 1]]) {
+      const middle = cut.shape.length / 2;
+      const gap = Math.min(2, middle * 0.16);
+      const left = parameterAtLength(cut.shape, middle - gap);
+      const right = parameterAtLength(cut.shape, middle + gap);
+      for (const [from, to, sign] of [[0, left, -1], [right, 1, 1]]) {
         const half = svgElement('g', { class: `hb-field__snip hb-field--${cut.color}` });
         half.style.setProperty('--hb-drift', `${sign * 2.6}px`);
-        half.append(svgElement('path', { class: 'hb-field__stem', d: linePath(start, end) }));
+        const ink = cut.stem.cloneNode();
+        ink.setAttribute('d', slicePath(cut.shape, from, to));
+        half.append(ink);
         batch.append(half);
       }
     }
@@ -339,15 +454,21 @@ export function createBoard(container, { onCut } = {}) {
     const activeElement = document.activeElement;
     const hadFocus = svg.contains(activeElement);
     const previousFocus = hadFocus ? edgeId(activeElement) : null;
-    const nextSignature = JSON.stringify([next.nodes.map(n => [n.id, n.x, n.y, !!n.ground]), next.edges.map(e => [e.id, e.a, e.b, e.color])]);
+    const nextSignature = JSON.stringify([next.height, next.groundY,
+      next.nodes.map(n => [n.id, n.x, n.y, !!n.ground]),
+      next.edges.map(e => [e.id, e.a, e.b, e.color, e.control?.x, e.control?.y, e.part])]);
     const changed = nextSignature !== signature;
     const before = live;
     board = next;
     side = nextSide;
     if (changed) {
       signature = nextSignature;
+      height = next.height ?? HEIGHT;
+      groundY = next.groundY ?? GROUND;
+      frame.style.setProperty('--hb-height', String(height));
+      frame.style.setProperty('--hb-min-height', `${Math.min(222, Math.round(height * 210 / HEIGHT))}px`);
       build(next);
-      geometry();
+      fit(true);
     } else if (reset) {
       clearEffects();
       hover = null;
@@ -371,7 +492,8 @@ export function createBoard(container, { onCut } = {}) {
       view.group.setAttribute('tabindex', id === roving ? '0' : '-1');
       const disabled = String(!enabled);
       if (view.group.getAttribute('aria-disabled') !== disabled) view.group.setAttribute('aria-disabled', disabled);
-      const label = `${enabled ? 'Cut ' : ''}${view.color} branch ${view.index + 1}${id === hint ? ', suggested move' : ''}`;
+      const part = view.part ? `, ${view.part}` : '';
+      const label = `${enabled ? 'Cut ' : ''}${view.color} branch ${view.index + 1}${part}${id === hint ? ', suggested move' : ''}`;
       if (view.group.getAttribute('aria-label') !== label) view.group.setAttribute('aria-label', label);
       view.group.classList.toggle('hb-field__edge--hint', id === hint);
     }
@@ -386,21 +508,24 @@ export function createBoard(container, { onCut } = {}) {
     preview();
   }
 
-  // SVG hit paths overlap at joints. Resolve the nearest actual segment in
-  // screen space so DOM order cannot decide which branch the player cuts.
+  // Hit paths overlap at joints. Compare the visible curves in screen space
+  // so DOM order cannot decide which branch the player cuts.
   function pick(event, touch = false) {
     if (!available.size) return null;
     const box = svg.getBoundingClientRect();
     if (!box.width || !box.height) return null;
-    const scale = box.height / HEIGHT;
+    const scale = box.height / height;
     const point = { x: (event.clientX - box.left) * width / box.width, y: (event.clientY - box.top) / scale };
-    const tolerance = (touch ? 22 : 13) / scale;
+    const tolerance = (touch ? 22 : dense ? 8 : 13) / scale;
     let best = null;
     let score = Infinity;
     let otherDistance = Infinity;
     for (const [id, edge] of edges) {
       if (!live.has(id)) continue;
-      const hit = distanceToEdge(point, nodes.get(edge.a).at, nodes.get(edge.b).at);
+      const shape = edge.shape;
+      if (point.x < shape.left - tolerance || point.x > shape.right + tolerance ||
+          point.y < shape.top - tolerance || point.y > shape.bottom + tolerance) continue;
+      const hit = distanceToEdge(point, shape);
       if (!available.has(id)) {
         otherDistance = Math.min(otherDistance, hit.distance);
         continue;
@@ -412,7 +537,7 @@ export function createBoard(container, { onCut } = {}) {
         best = { id, distance: hit.distance };
       }
     }
-    if (!best || (otherDistance < 3.6 / scale && otherDistance + 1 / scale < best.distance)) return null;
+    if (!best || otherDistance + (touch ? 2.5 : 1) / scale < best.distance) return null;
     return best.id;
   }
 
@@ -452,8 +577,25 @@ export function createBoard(container, { onCut } = {}) {
     if (available.has(id)) onCut?.(id);
   }
 
+  // Keep keyboard selection visible inside the optional zoomed field.
+  // Only an explicit navigation key pans it, and only horizontally.
+  function showInViewport(id) {
+    const scrollport = container.closest?.('.board-scroll');
+    if (!scrollport || scrollport.scrollWidth <= scrollport.clientWidth) return;
+    const port = scrollport.getBoundingClientRect();
+    const art = svg.getBoundingClientRect();
+    const x = art.left + edges.get(id).center.x * art.width / width;
+    const padding = Math.min(24, port.width / 6);
+    if (x < port.left + padding) scrollport.scrollLeft += x - port.left - padding;
+    else if (x > port.right - padding) scrollport.scrollLeft += x - port.right + padding;
+  }
+
   svg.addEventListener('pointermove', event => {
-    if (event.pointerType !== 'touch') setHover(pick(event));
+    if (event.pointerType !== 'touch') { setHover(pick(event)); return; }
+    if (press?.touch) {
+      const onBranch = Math.hypot(event.clientX - press.x, event.clientY - press.y) <= 12 && pick(event, true) === press.id;
+      setHover(onBranch ? press.id : null);
+    }
   });
   svg.addEventListener('pointerleave', () => setHover(null));
   svg.addEventListener('pointerdown', event => {
@@ -461,7 +603,7 @@ export function createBoard(container, { onCut } = {}) {
     const touch = event.pointerType === 'touch';
     press = { id: pick(event, touch), x: event.clientX, y: event.clientY, touch };
     keyboardFocus = false;
-    if (!touch) setHover(press.id);
+    setHover(press.id);
   });
   svg.addEventListener('pointercancel', () => { press = null; setHover(null); });
   svg.addEventListener('click', event => {
@@ -471,8 +613,8 @@ export function createBoard(container, { onCut } = {}) {
     if (event.detail === 0) { cut(edgeId(event.target)); return; }
     const touch = event.pointerType === 'touch' || started?.touch;
     const chosen = pick(event, touch);
-    if (started && (chosen !== started.id || Math.hypot(event.clientX - started.x, event.clientY - started.y) > (touch ? 12 : 7))) return;
     if (touch) setHover(null);
+    if (started && (chosen !== started.id || Math.hypot(event.clientX - started.x, event.clientY - started.y) > (touch ? 12 : 7))) return;
     cut(chosen);
   });
   svg.addEventListener('focusin', event => {
@@ -504,19 +646,21 @@ export function createBoard(container, { onCut } = {}) {
     keyboardFocus = true;
     setRoving(next);
     edges.get(next).group.focus({ preventScroll: true });
+    showInViewport(next);
     preview();
   });
 
-  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(fit);
+  const onResize = () => fit();
+  const observer = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(onResize);
   if (observer) observer.observe(frame);
-  else window.addEventListener('resize', fit);
+  else window.addEventListener('resize', onResize);
   geometry();
   fit();
   return {
     update,
     destroy() {
       observer?.disconnect();
-      if (!observer) window.removeEventListener('resize', fit);
+      if (!observer) window.removeEventListener('resize', onResize);
       clearEffects();
       frame.remove();
     }

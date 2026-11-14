@@ -1,13 +1,14 @@
 import { freshSeed, generateBoard } from './generator.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
 
-const variants = new Set(['green', 'redblue', 'mixed']);
-const sizes = new Set(['small', 'standard', 'large']);
+const classicVariants = new Set(['green', 'redblue', 'mixed']);
+const classicSizes = new Set(['small', 'standard', 'large']);
 const opponents = new Set(['local', 'computer', 'link']);
 const sides = ['blue', 'red'];
 const matchIdPattern = /^[A-Za-z0-9_-]{1,64}$/;
+export const TURN_MS = 10_000;
 
-function cleanName(value) {
+export function cleanName(value) {
   if (typeof value !== 'string') return '';
   const text = value.replace(/[\s\p{White_Space}]+/gu, ' ')
     .replace(/[\p{Cc}\p{Bidi_Control}]/gu, '')
@@ -34,17 +35,22 @@ export function normalizePlayers(players, firstSide = 'blue', opponent = 'local'
   return seats;
 }
 
+function supportsBoard(version, variant, difficulty) {
+  if (version === 3) return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
+  return (version === 1 || version === 2) && classicVariants.has(variant) && classicSizes.has(difficulty);
+}
+
 function openingPosition(config, boardVersion, newMatch) {
-  const { seed, variant = 'green', difficulty = 'standard', opponent = 'local', seat,
-    firstSide = 'blue', players, matchId } = config;
-  if (typeof seed !== 'string' || seed.length > 256 || !variants.has(variant) ||
-      !sizes.has(difficulty) || !opponents.has(opponent) || !sides.includes(firstSide) ||
-      (seat !== undefined && !sides.includes(seat)) || (boardVersion !== 1 && boardVersion !== 2) ||
+  const { seed, variant = 'green', difficulty = boardVersion === 3 ? 'expert' : 'standard', opponent = 'local', seat,
+    firstSide = 'blue', players, matchId, timed = boardVersion === 3 } = config;
+  if (typeof seed !== 'string' || seed.length > 256 || !supportsBoard(boardVersion, variant, difficulty) ||
+      !opponents.has(opponent) || !sides.includes(firstSide) || (seat !== undefined && !sides.includes(seat)) ||
+      typeof timed !== 'boolean' || (boardVersion === 3 && !timed) ||
       (matchId !== undefined && (typeof matchId !== 'string' || !matchIdPattern.test(matchId)))) {
     throw new Error('Invalid match configuration.');
   }
   let assignments = players;
-  if (opponent === 'computer' && boardVersion === 2 && seat && seat !== firstSide) {
+  if (opponent === 'computer' && boardVersion >= 2 && seat && seat !== firstSide) {
     const other = otherSide(seat);
     assignments = { [seat]: { kind: 'human', ...players?.[seat] }, [other]: { kind: 'computer', ...players?.[other] } };
   }
@@ -55,21 +61,42 @@ function openingPosition(config, boardVersion, newMatch) {
   const game = {
     seed, variant, difficulty, opponent, seat: seat ?? humanSide ?? firstSide, firstSide,
     players: seats, boardVersion, board, live, side: firstSide, victor: winner(board, live, firstSide), moves: [], rows: [],
+    timed, deadline: null, timedOut: null,
   };
-  if (opponent === 'link') {
-    if (matchId !== undefined) game.matchId = matchId;
-    else if (newMatch && boardVersion === 2) {
-      game.matchId = globalThis.crypto?.randomUUID?.() ?? (freshSeed() + freshSeed() + freshSeed());
-    }
+  if (matchId !== undefined) game.matchId = matchId;
+  else if (newMatch && (timed || (opponent === 'link' && boardVersion >= 2))) {
+    game.matchId = globalThis.crypto?.randomUUID?.() ?? (freshSeed() + freshSeed() + freshSeed());
   }
+  if (opponent === 'link' && boardVersion === 1 && !timed &&
+      (config.wireVersion === 1 || (!newMatch && config.boardVersion === undefined))) game.wireVersion = 1;
   return game;
 }
 
-export function createGame({ boardVersion = 2, ...config }) {
+export function createGame({ boardVersion = 3, ...config }) {
   return openingPosition(config, boardVersion, true);
 }
 
-export function playCut(game, edgeId) {
+function ownsClock(game) {
+  return game.opponent !== 'link' || game.side === game.seat;
+}
+
+function validTimestamp(value) {
+  return Number.isSafeInteger(value) && value >= 0;
+}
+
+// A scheduled reveal can pass its end time as the first playable millisecond.
+export function startTurnClock(game, now = Date.now()) {
+  if (!game.timed || game.victor || game.deadline !== null || !ownsClock(game)) return game;
+  if (!validTimestamp(now) || !validTimestamp(now + TURN_MS)) return game;
+  return { ...game, deadline: now + TURN_MS };
+}
+
+export function expireTurn(game, now = Date.now()) {
+  if (!game.timed || game.victor || game.deadline === null || !validTimestamp(now) || now < game.deadline) return game;
+  return { ...game, victor: otherSide(game.side), timedOut: game.side, deadline: null };
+}
+
+function applyCut(game, edgeId) {
   if (game.victor) return null;
   const change = cutEdge(game.board, game.live, edgeId, game.side);
   if (!change) return null;
@@ -78,28 +105,46 @@ export function playCut(game, edgeId) {
   const row = { side: game.side, edgeId, branch: index + 1, color: edge.color, fallen: change.fallen };
   const side = otherSide(game.side);
   return {
-    ...game, side, live: change.live, victor: winner(game.board, change.live, side),
+    ...game, side, live: change.live, victor: winner(game.board, change.live, side), deadline: null,
     moves: [...game.moves, edgeId], rows: [...game.rows, row]
   };
 }
 
-export function saveData({ seed, variant, difficulty, opponent, seat, firstSide, players, boardVersion, matchId, moves }) {
+export function playCut(game, edgeId, now = Date.now()) {
+  if (game.timed && (!ownsClock(game) || game.deadline === null || !validTimestamp(now) ||
+      now < game.deadline - TURN_MS || now >= game.deadline)) return null;
+  return applyCut(game, edgeId);
+}
+
+export function saveData({
+  seed, variant, difficulty, opponent, seat, firstSide, players, boardVersion, matchId, moves, timed, deadline, timedOut, wireVersion,
+}) {
   const data = { seed, variant, difficulty, opponent, seat, firstSide, boardVersion,
-    players: { blue: { ...players.blue }, red: { ...players.red } }, moves: [...moves] };
+    players: { blue: { ...players.blue }, red: { ...players.red } }, moves: [...moves], timed, deadline, timedOut };
   if (matchId !== undefined) data.matchId = matchId;
+  if (wireVersion === 1) data.wireVersion = 1;
   return data;
 }
 
-export function restoreGame(saved) {
+export function restoreGame(saved, now = Date.now()) {
   if (!saved || !Array.isArray(saved.moves) || saved.moves.length > 256) return null;
   try {
     const version = saved.boardVersion === undefined ? 1 : saved.boardVersion;
     let game = openingPosition(saved, version, false);
     for (const id of saved.moves) {
-      game = playCut(game, id);
+      game = applyCut(game, id);
       if (!game) return null;
     }
-    return game;
+    const deadline = saved.deadline ?? null;
+    const timedOut = saved.timedOut ?? null;
+    if (deadline === null && timedOut === null) return game;
+    if (!game.timed || game.victor) return null;
+    if (timedOut !== null) {
+      if (timedOut !== game.side || deadline !== null) return null;
+      return { ...game, victor: otherSide(timedOut), timedOut };
+    }
+    if (!ownsClock(game) || !validTimestamp(deadline) || deadline < TURN_MS || !validTimestamp(now)) return null;
+    return expireTurn({ ...game, deadline }, now);
   } catch {
     return null;
   }
@@ -112,7 +157,7 @@ export function isHumanTurn(game) {
 }
 
 function latestHumanMove(game) {
-  if (game.opponent === 'link') return -1;
+  if (game.timed || game.opponent === 'link') return -1;
   return game.rows.findLastIndex(row => game.players[row.side].kind === 'human');
 }
 
@@ -126,27 +171,40 @@ export function undoTurn(game) {
   return restoreGame({ ...saveData(game), moves: game.moves.slice(0, index) }) || game;
 }
 
-export function matchKey({ seed, variant, difficulty, boardVersion = 1, firstSide = 'blue', players, opponent = 'local', matchId }) {
+export function matchKey({
+  seed, variant, difficulty, boardVersion = 1, timed = boardVersion === 3, firstSide = 'blue', players, opponent = 'local', matchId,
+}) {
   const seats = normalizePlayers(players, firstSide, opponent);
-  return JSON.stringify([variant, difficulty, seed, boardVersion, firstSide, seats.blue, seats.red, matchId ?? null]);
+  return JSON.stringify([variant, difficulty, seed, boardVersion, timed, firstSide, seats.blue, seats.red, matchId ?? null]);
 }
 
 function isPrefix(shorter, longer) {
   return shorter.length <= longer.length && shorter.every((id, index) => id === longer[index]);
 }
 
-export function receiveLink(decoded, saved) {
+export function receiveLink(decoded, saved, now = Date.now()) {
   if (!decoded || !Array.isArray(decoded.moves)) return { game: null, note: '' };
   const firstSide = decoded.firstSide ?? 'blue';
   const nextSide = decoded.moves.length % 2 ? otherSide(firstSide) : firstSide;
   if (!sides.includes(firstSide) || decoded.side !== nextSide) return { game: null, note: '' };
-  const previous = saved?.opponent === 'link' && matchKey(saved) === matchKey(decoded) ? restoreGame(saved) : null;
-  if (previous && !isPrefix(previous.moves, decoded.moves)) {
-    const note = isPrefix(decoded.moves, previous.moves)
-      ? 'This link shows an earlier turn. Your latest position is open.'
+  let previous = null;
+  if (saved?.opponent === 'link' && matchKey(saved) === matchKey(decoded)) {
+    previous = restoreGame(decoded.wireVersion === 1 ? { ...saved, wireVersion: 1 } : saved, now);
+  }
+  const recipient = decoded.timedOut ? otherSide(decoded.side) : decoded.side;
+  // A link transfers a position. The active clock belongs to its recipient's device.
+  const game = restoreGame({ ...decoded, opponent: 'link', seat: previous?.seat ?? recipient, deadline: null }, now);
+  if (!previous || !game) return { game, note: '' };
+  const previousIsPrefix = isPrefix(previous.moves, game.moves);
+  const incomingIsPrefix = isPrefix(game.moves, previous.moves);
+  // A timeout ends its exact position, including competing cuts made from that position.
+  if (game.timedOut && incomingIsPrefix) return { game, note: '' };
+  if (previous.timedOut && previousIsPrefix) return { game: previous, note: '' };
+  if (previousIsPrefix && incomingIsPrefix) return { game: previous, note: '' };
+  if (!previousIsPrefix) {
+    const note = incomingIsPrefix ? 'This link shows an earlier turn. Your latest position is open.'
       : 'This link follows a different sequence. Your saved position is open.';
     return { game: previous, note };
   }
-  const game = restoreGame({ ...decoded, opponent: 'link', seat: previous?.seat ?? decoded.side });
   return { game, note: '' };
 }

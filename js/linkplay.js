@@ -5,7 +5,7 @@ import { normalizePlayers } from './session.js';
 const PREFIX = '#turn=';
 const SIDES = ['blue', 'red'];
 const VARIANTS = new Set(['green', 'redblue', 'mixed']);
-const DIFFICULTIES = new Set(['small', 'standard', 'large']);
+const COMMON_SIZES = new Set(['small', 'standard', 'large']);
 const MAX_SEED_BYTES = 256;
 const MAX_NAME_BYTES = 24 * 4; // A Unicode scalar needs at most four UTF-8 bytes.
 const MATCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -53,7 +53,12 @@ function checksum(payload) {
   return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0');
 }
 
-function replay(board, moves, firstSide) {
+function supportsSettings(variant, difficulty, boardVersion) {
+  if (boardVersion === 3) return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
+  return COMMON_SIZES.has(difficulty) && VARIANTS.has(variant);
+}
+
+function replay(board, moves, firstSide, timedOut) {
   if (moves.length > board.edges.length) return null;
   let live = initialEdges(board);
   let side = firstSide;
@@ -65,6 +70,10 @@ function replay(board, moves, firstSide) {
     live = result.live;
     side = otherSide(side);
     victor = winner(board, live, side);
+  }
+  if (timedOut !== null) {
+    if (victor !== null || timedOut !== side) return null;
+    victor = otherSide(side);
   }
   return { live, side, winner: victor };
 }
@@ -87,16 +96,24 @@ function linkPlayers(players, firstSide) {
   return normalizePlayers(players, firstSide, 'link');
 }
 
-/** Encode two human players and their deliberately cut edge IDs, in order.
- * New links default to generator 2 with Blue first. A zero-cut link invites the first mover.
+/** Share the resolved draw, deliberate cuts, and any terminal timeout. An invitation may have zero cuts.
+ * A generation-3 board uses ten-second turns. Older boards may be played with or without the clock.
+ * An active deadline belongs to the receiving device and never goes into the URL.
  * Throws on unsupported settings, an invalid identity, or an illegal/oversized history.
  */
-export function encodeTurn({ seed, variant, difficulty, moves, firstSide = 'blue', boardVersion = 2, players, matchId }) {
-  if (!VARIANTS.has(variant) || !DIFFICULTIES.has(difficulty)) {
+export function encodeTurn({
+  seed, boardVersion = 3, variant = 'green', difficulty = boardVersion === 3 ? 'expert' : 'standard',
+  moves, firstSide = 'blue', players, matchId, timed = boardVersion === 3, timedOut = null, wireVersion,
+}) {
+  if (!supportsSettings(variant, difficulty, boardVersion)) {
     throw new RangeError('Unknown variant or difficulty.');
   }
-  if (!SIDES.includes(firstSide) || ![1, 2].includes(boardVersion)) {
+  if (!SIDES.includes(firstSide) || ![1, 2, 3].includes(boardVersion)) {
     throw new RangeError('Unknown opening side or board version.');
+  }
+  if (typeof timed !== 'boolean' || (boardVersion === 3 && !timed) ||
+      (timedOut !== null && (!timed || !SIDES.includes(timedOut)))) {
+    throw new RangeError('Invalid turn clock or timeout.');
   }
   if (matchId !== undefined && (typeof matchId !== 'string' || !MATCH_ID.test(matchId))) {
     throw new RangeError('Invalid match identifier.');
@@ -109,12 +126,22 @@ export function encodeTurn({ seed, variant, difficulty, moves, firstSide = 'blue
   const blue = encodeText(seats.blue.name, MAX_NAME_BYTES);
   const red = encodeText(seats.red.name, MAX_NAME_BYTES);
   const board = generateBoard(seed, variant, difficulty, boardVersion);
-  if (!replay(board, moves, firstSide)) throw new RangeError('The move history is illegal.');
+  if (!replay(board, moves, firstSide, timedOut)) throw new RangeError('The move history or timeout is illegal.');
 
   // Indices identify edges in the original board, so falling edges never shift later moves.
   const indexById = new Map(board.edges.map((edge, index) => [edge.id, index]));
   const cuts = moves.map(id => indexById.get(id).toString(36)).join('-');
-  const payload = ['2', firstSide, variant, difficulty, seedToken, cuts, boardVersion, blue, red, matchId ?? ''].join('.');
+  const fields = [timed ? '3' : '2', firstSide, variant, difficulty, seedToken, cuts];
+  // A v1 original can be shared with the original clients while its settings still fit that format.
+  const defaults = wireVersion === 1 && normalizePlayers(undefined, 'blue', 'link');
+  if (defaults && !timed && boardVersion === 1 && firstSide === 'blue' && matchId === undefined &&
+      SIDES.every(side => seats[side].name === defaults[side].name)) {
+    fields[0] = '1';
+  } else {
+    fields.push(boardVersion, blue, red, matchId ?? '');
+    if (timed) fields.push(timedOut ?? '');
+  }
+  const payload = fields.join('.');
   const hash = `${PREFIX}${payload}.${checksum(payload)}`;
   if (hash.length > MAX_HASH_LENGTH) throw new RangeError('The turn link is too long.');
   return hash;
@@ -125,22 +152,30 @@ function decodeMetadata(fields) {
   // Published v1 links always started with Blue on the original generator.
   if (version === '1') {
     if (fields.length !== 6 || firstSide !== 'blue') return null;
-    return { firstSide, boardVersion: 1, players: normalizePlayers(undefined, firstSide, 'link'), matchId: undefined };
+    return { wireVersion: 1, firstSide, boardVersion: 1, players: normalizePlayers(undefined, firstSide, 'link'),
+      matchId: undefined, timed: false, timedOut: null };
   }
-  if (version !== '2' || fields.length !== 10 || !SIDES.includes(firstSide)) return null;
-  const [versionToken, blueToken, redToken, idToken] = fields.slice(6);
-  if ((versionToken !== '1' && versionToken !== '2') || (idToken !== '' && !MATCH_ID.test(idToken))) return null;
+  const timed = version === '3';
+  if ((!timed && version !== '2') || fields.length !== (timed ? 11 : 10) || !SIDES.includes(firstSide)) return null;
+  const [versionToken, blueToken, redToken, idToken, timeoutToken] = fields.slice(6);
+  const boardVersions = timed ? ['1', '2', '3'] : ['1', '2'];
+  if (!boardVersions.includes(versionToken)) return null;
+  if (idToken !== '' && !MATCH_ID.test(idToken)) return null;
+  const timedOut = timeoutToken || null;
+  if (timedOut !== null && !SIDES.includes(timedOut)) return null;
   const blue = decodeText(blueToken, MAX_NAME_BYTES);
   const red = decodeText(redToken, MAX_NAME_BYTES);
   if (blue === null || red === null) return null;
   const players = normalizePlayers({ blue: { name: blue }, red: { name: red } }, firstSide, 'link');
   // The wire stores normalized names. Reject hidden controls, excessive length, and blank seats.
   if (players.blue.name !== blue || players.red.name !== red) return null;
-  return { firstSide, boardVersion: Number(versionToken), players, matchId: idToken || undefined };
+  return { wireVersion: Number(version), firstSide, boardVersion: Number(versionToken), players,
+    matchId: idToken || undefined, timed, timedOut };
 }
 
 /** Decode location.hash and replay every cut. Returns null for any invalid link.
- * On success, side is the next side to move; winner is null until the game is over.
+ * On a timeout, side identifies the player who ran out of time and winner identifies the opponent.
+ * On a live turn, winner and timedOut are null.
  */
 export function decodeTurn(hash) {
   if (typeof hash !== 'string' || hash.length > MAX_HASH_LENGTH || !hash.startsWith(PREFIX)) {
@@ -150,7 +185,7 @@ export function decodeTurn(hash) {
   const check = fields.pop();
   if (check !== checksum(fields.join('.'))) return null;
   const [, , variant, difficulty, seedToken, cuts] = fields;
-  if (!VARIANTS.has(variant) || !DIFFICULTIES.has(difficulty) || typeof cuts !== 'string') return null;
+  if (typeof cuts !== 'string') return null;
 
   const indices = cuts === '' ? [] : cuts.split('-');
   if (indices.length > MAX_MOVES || indices.some(token => !/^(?:0|[1-9a-z][0-9a-z]{0,6})$/.test(token))) {
@@ -158,7 +193,7 @@ export function decodeTurn(hash) {
   }
   try {
     const metadata = decodeMetadata(fields);
-    if (!metadata) return null;
+    if (!metadata || !supportsSettings(variant, difficulty, metadata.boardVersion)) return null;
     const seed = decodeText(seedToken, MAX_SEED_BYTES);
     if (seed === null) return null;
     const board = generateBoard(seed, variant, difficulty, metadata.boardVersion);
@@ -169,10 +204,10 @@ export function decodeTurn(hash) {
       if (!edge) return null;
       moves.push(edge.id);
     }
-    const state = replay(board, moves, metadata.firstSide);
+    const state = replay(board, moves, metadata.firstSide, metadata.timedOut);
     return state && { seed, variant, difficulty, moves, board, ...state, ...metadata };
   } catch {
-    // A fragment is untrusted input, including any malformed base64 or UTF-8 seed.
+    // A fragment may contain malformed base64 or invalid UTF-8 in a seed or player name.
     return null;
   }
 }

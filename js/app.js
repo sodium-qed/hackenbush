@@ -1,33 +1,36 @@
 import { createBoard } from './board.js';
+import { drawSeats } from './draw.js';
 import { freshSeed } from './generator.js';
 import { createGuide } from './guide.js';
 import { copyText, decodeTurn, encodeTurn } from './linkplay.js';
 import { createPlayers } from './players.js';
 import { timeBoardPreview } from './preview.js';
 import { otherSide } from './rules.js';
-import { canUndo, createGame, isHumanTurn, matchKey, playCut, receiveLink, restoreGame, saveData, undoTurn } from './session.js';
+import { TURN_MS, canUndo, createGame, expireTurn, isHumanTurn, matchKey, playCut, receiveLink,
+  restoreGame, saveData, startTurnClock, undoTurn } from './session.js';
 import { chooseMove } from './strategy.js';
 
 const $ = id => document.getElementById(id);
 const currentKey = 'groundwork.hackenbush.match.v1';
-const linkGamesKey = 'groundwork.hackenbush.linkGames.v1';
-const openingKey = 'groundwork.hackenbush.opening.v2';
+const linksKey = 'groundwork.hackenbush.linkGames.v1';
+const lobbyKey = 'groundwork.hackenbush.lobby.v3';
+const entrantsKey = 'groundwork.hackenbush.entrants.v3';
 const colors = { green: 'Green', red: 'Red', blue: 'Blue' };
-const sizes = { small: 'Small', standard: 'Standard', large: 'Large' };
-const variantNames = { green: 'Green', redblue: 'Red–Blue', mixed: 'Red–Blue + green' };
+const rules = { green: 'Green', redblue: 'Red–Blue', mixed: 'Red–Blue + green' };
 const guide = createGuide($('guide-dialog'));
-const playerForm = createPlayers($('players-view'), { onStart: startMatch, onChange: saveSeatChoices });
+const playerForm = createPlayers($('players-view'), { onStart: deal, onChange: saveDraft });
 const boardView = createBoard($('board'), {
   onCut(id) { if (phase === 'playing' && isHumanTurn(game)) makeMove(id); }
 });
 
 let game = null;
 let phase = 'ready';
-let opening = null;
+let lobby = null;
 let hintId = null;
+let previewUntil = 0;
+let cancelPreview = null;
 let computerTimer = null;
-let previewFrame = null;
-let cancelClock = null;
+let displayTimer = null;
 
 function readStorage(key, tabOnly = false) {
   try { return JSON.parse((tabOnly ? sessionStorage : localStorage).getItem(key)); } catch { return null; }
@@ -37,18 +40,19 @@ function writeStorage(key, data, tabOnly = false) {
     const storage = tabOnly ? sessionStorage : localStorage;
     if (data === null) storage.removeItem(key);
     else storage.setItem(key, JSON.stringify(data));
-  } catch { /* Private or full storage still allows a match in memory. */ }
+  } catch { /* Direct play also works when browser storage is unavailable. */ }
 }
-function recentLinkGames() {
-  const saved = readStorage(linkGamesKey);
+function linkGames() {
+  const saved = readStorage(linksKey);
   return Array.isArray(saved) ? saved.filter(item => item && typeof item === 'object') : [];
 }
 function persist() {
   const data = saveData(game);
+  if (previewUntil) data.previewUntil = previewUntil;
   writeStorage(currentKey, data);
   if (game.opponent === 'link') {
-    const others = recentLinkGames().filter(item => matchKey(item) !== matchKey(game));
-    writeStorage(linkGamesKey, [data, ...others].slice(0, 24));
+    const rest = linkGames().filter(item => matchKey(item) !== matchKey(game));
+    writeStorage(linksKey, [data, ...rest].slice(0, 24));
   }
 }
 function setHash(hash) {
@@ -57,26 +61,21 @@ function setHash(hash) {
   url.hash = hash;
   history.replaceState(null, '', url);
 }
-function feedback(text = '') {
-  $('board-feedback').textContent = text;
-  $('board-feedback').hidden = !text;
+function saveMatch() {
+  persist();
+  if (game.opponent === 'link') setHash(encodeTurn(game));
+  else if (location.hash.startsWith('#turn=')) setHash('');
 }
-function announce(text) { $('announcer').textContent = text; }
+function feedback(message = '') {
+  $('board-feedback').textContent = message;
+  $('board-feedback').hidden = !message;
+}
+function announce(message) { $('announcer').textContent = message; }
 function cancelTimers() {
   clearTimeout(computerTimer);
-  computerTimer = null;
-  cancelAnimationFrame(previewFrame);
-  previewFrame = null;
-  cancelClock?.();
-  cancelClock = null;
-}
-function settingsOf(source) {
-  return { seed: source.seed, variant: source.variant, difficulty: source.difficulty, boardVersion: source.boardVersion };
-}
-function validOpening(value) {
-  return value && typeof value.seed === 'string' && value.seed.length <= 256 &&
-    Object.hasOwn(variantNames, value.variant) && Object.hasOwn(sizes, value.difficulty) &&
-    (value.boardVersion === 1 || value.boardVersion === 2);
+  clearTimeout(displayTimer);
+  cancelPreview?.();
+  cancelPreview = null;
 }
 function setZoom(zoomed) {
   $('board-scroll').dataset.zoom = String(zoomed);
@@ -84,21 +83,112 @@ function setZoom(zoomed) {
   $('zoom').querySelector('span').textContent = zoomed ? 'Fit board' : 'Zoom board';
   if (!zoomed) $('board-scroll').scrollLeft = 0;
 }
-function variantControls(value) {
-  $('variant-green').setAttribute('aria-pressed', String(value.variant === 'green'));
-  $('variant-redblue').setAttribute('aria-pressed', String(value.variant !== 'green'));
-  const locked = phase === 'preview' || phase === 'seats';
-  $('variant-green').disabled = locked;
-  $('variant-redblue').disabled = locked;
-  $('mixed-row').hidden = value.variant === 'green';
-  $('mixed-toggle').checked = value.variant === 'mixed';
-  $('difficulty').value = value.difficulty;
+function paintClock(remaining) {
+  const seconds = String(Math.ceil(Math.max(0, remaining) / 1000));
+  if ($('clock-value').textContent !== seconds) $('clock-value').textContent = seconds;
+  const progress = Math.max(0, Math.min(1, remaining / TURN_MS));
+  $('clock-arc').style.strokeDashoffset = String((1 - progress) * 100);
+  $('clock').dataset.urgent = String(remaining <= 3000);
 }
-
-function showKey(variant) {
+function setPhase(next) {
+  phase = next;
+  $('game-table').dataset.phase = next;
+  const ready = phase === 'ready';
+  const playing = phase === 'playing';
+  $('variants').hidden = !ready;
+  $('garden-title').hidden = ready;
+  $('opening-rules').hidden = !ready;
+  $('match-players').hidden = ready;
+  $('field').hidden = ready;
+  $('new-game').hidden = !playing;
+  $('board-tools').hidden = !playing;
+  $('history-panel').hidden = !playing;
+  $('guide-nav').disabled = phase === 'preview';
+  $('resume').hidden = !ready || !game;
+  $('setup-title').textContent = ready ? 'At the table' : 'Players';
+  if (!ready) playerForm.close();
+}
+function updateRules() {
+  $('variant-green').setAttribute('aria-pressed', String(lobby.variant === 'green'));
+  $('variant-redblue').setAttribute('aria-pressed', String(lobby.variant === 'redblue'));
+  $('color-rule').textContent = lobby.variant === 'green'
+    ? 'Both players can cut any green branch. The draw decides who opens.'
+    : 'Red cuts red. Blue cuts blue. Colors and the opening player are drawn at random.';
+}
+function enterLobby({ variant, seed, choices } = {}) {
+  cancelTimers();
+  const previous = lobby || game;
+  const selected = variant ?? previous?.variant;
+  lobby = { variant: selected === 'green' ? 'green' : 'redblue', choices: choices ?? lobby?.choices ?? readStorage(entrantsKey) };
+  if (typeof seed === 'string' && seed.length <= 256) lobby.seed = seed;
+  previewUntil = 0;
+  hintId = null;
+  setZoom(false);
+  if (location.hash.startsWith('#turn=')) setHash('');
+  setPhase('ready');
+  $('turn-card').dataset.state = 'ready';
+  $('turn-card').removeAttribute('data-side');
+  $('turn-label').textContent = 'Per turn';
+  $('turn-name').textContent = 'Turn clock';
+  $('turn-help').textContent = 'Make your cut within ten seconds. At zero, your opponent wins.';
+  $('turn-action').hidden = true;
+  $('link-area').hidden = true;
+  $('share-turn').hidden = true;
+  $('clock').hidden = false;
+  $('result-mark').hidden = true;
+  $('board-caption').textContent = 'Expert garden';
+  updateRules();
+  paintClock(TURN_MS);
+  playerForm.open({ ...lobby.choices, variant: lobby.variant });
+  writeStorage(lobbyKey, lobby, true);
+  feedback();
+  announce('Enter the players’ names before drawing seats.');
+}
+function saveDraft(choices) {
+  if (phase !== 'ready' || !lobby) return;
+  lobby.choices = choices;
+  writeStorage(lobbyKey, lobby, true);
+}
+function chooseRules(variant) {
+  if (!lobby || lobby.variant === variant) return;
+  lobby.variant = variant;
+  delete lobby.seed;
+  updateRules();
+  playerForm.open({ ...lobby.choices, variant });
+  writeStorage(lobbyKey, lobby, true);
+}
+function deal(choices) {
+  if (phase !== 'ready' || !lobby) return;
+  const { variant, seed } = lobby;
+  const seats = drawSeats(choices, variant);
+  const next = createGame({ seed: seed ?? freshSeed(), variant, boardVersion: 3, difficulty: 'expert', ...seats });
+  writeStorage(entrantsKey, choices);
+  activate(next, { previewEnd: Date.now() + 2000, scroll: true });
+}
+function seatName(side) { return game.players[side].name; }
+function seatLabel(side) { return side === game.firstSide ? 'Player 1' : 'Player 2'; }
+function seatDetails(side) {
+  const details = [seatLabel(side)];
+  if (game.variant !== 'green') details.push(colors[side]);
+  details.push(game.players[side].kind === 'computer' ? 'Computer' : 'Human');
+  return details.join(' · ');
+}
+function cutInstruction() {
+  if (game.variant === 'green') return 'Cut any green branch.';
+  if (game.variant === 'mixed') return 'Cut a ' + game.side + ' or green branch.';
+  return 'Cut a ' + game.side + ' branch.';
+}
+function outcome() {
+  return seatName(game.side) + (game.timedOut ? ' ran out of time.' : ' has no legal cut.');
+}
+function turnMessage() {
+  if (game.victor) return seatName(game.victor) + ' wins. ' + outcome();
+  return seatName(game.side) + ' to move. ' + seatDetails(game.side) + '.';
+}
+function showKey() {
   const key = $('edge-key');
   key.replaceChildren();
-  const kinds = variant === 'green' ? ['green'] : variant === 'mixed' ? ['blue','red','green'] : ['blue','red'];
+  const kinds = game.variant === 'green' ? ['green'] : game.variant === 'mixed' ? ['blue', 'red', 'green'] : ['blue', 'red'];
   for (const color of kinds) {
     const item = document.createElement('span');
     item.className = 'key-item';
@@ -109,110 +199,13 @@ function showKey(variant) {
     key.append(item);
   }
 }
-
-function setOpeningView(nextPhase) {
-  phase = nextPhase;
-  const ready = phase === 'ready';
-  const preview = phase === 'preview';
-  $('game-table').dataset.phase = phase;
-  $('ready-view').hidden = !ready;
-  $('field').hidden = !preview;
-  $('board-tools').hidden = true;
-  $('history-panel').hidden = true;
-  $('setup-panel').hidden = !ready;
-  $('settings-fields').hidden = !ready;
-  $('match-players').hidden = true;
-  $('link-area').hidden = true;
-  $('share-turn').hidden = true;
-  $('resume').hidden = !game;
-  $('new-game').hidden = ready;
-  $('guide-nav').disabled = preview;
-  $('setup-title').textContent = 'Board settings';
-  $('turn-card').dataset.variant = opening.variant;
-  $('turn-card').dataset.state = 'opening';
-  $('turn-card').removeAttribute('data-side');
-  $('turn-label').textContent = 'Game rules';
-  $('turn-name').textContent = variantNames[opening.variant];
-  $('turn-help').textContent = opening.variant === 'green'
-    ? 'Either player can cut any green branch. Player 1 goes first.'
-    : opening.variant === 'mixed'
-      ? 'Each player cuts their own color or green. Either color can go first.'
-      : 'Each player cuts their own color. Either color can go first.';
-  $('board-caption').textContent = ready ? 'Match setup' : preview ? '2 seconds' : 'Board covered';
-  $('field-label').textContent = preview ? 'Study the board' : 'Playing field';
-  variantControls(opening);
-  if (phase !== 'seats') playerForm.close();
-  feedback();
-}
-function readyForGame(config = {}) {
-  cancelTimers();
-  const previous = opening || game;
-  opening = {
-    seed: config.seed ?? freshSeed(),
-    variant: config.variant ?? previous?.variant ?? 'redblue',
-    difficulty: config.difficulty ?? previous?.difficulty ?? 'standard',
-    boardVersion: config.boardVersion ?? 2
-  };
-  hintId = null;
-  setZoom(false);
-  if (location.hash.startsWith('#turn=')) setHash('');
-  setOpeningView('ready');
-  announce('Choose the board settings, then reveal the board.');
-  writeStorage(openingKey, { ...opening, phase }, true);
-}
-function saveSeatChoices(choices) {
-  if (phase !== 'seats') return;
-  opening.choices = choices;
-  writeStorage(openingKey, { ...opening, phase }, true);
-}
-function choosePlayers() {
-  cancelTimers();
-  setOpeningView('seats');
-  writeStorage(openingKey, { ...opening, phase }, true);
-  playerForm.open({ ...(opening.choices || game), variant: opening.variant });
-  if (!$('guide-dialog').open) $('players-view').focus({ preventScroll: true });
-  announce('Board covered. Choose the names, controllers, and turn order.');
-}
-function revealBoard() {
-  if (phase !== 'ready') return;
-  const position = createGame({ ...opening });
-  setOpeningView('preview');
-  // Reloading a preview returns to seat selection without exposing a second look.
-  writeStorage(openingKey, { ...opening, phase: 'seats' }, true);
-  showKey(opening.variant);
-  boardView.update({ board: position.board, live: position.live, side: position.side, locked: true, reset: true });
-  $('field').scrollIntoView({ block: 'nearest', behavior: 'instant' });
-  announce('Two-second board preview.');
-  // Start after one painted frame with the whole board visible.
-  previewFrame = requestAnimationFrame(() => {
-    previewFrame = requestAnimationFrame(() => {
-      if (phase !== 'preview') return;
-      cancelClock = timeBoardPreview(seconds => {
-        $('board-caption').textContent = seconds + (seconds === 1 ? ' second' : ' seconds');
-      }, choosePlayers);
-    });
-  });
-}
-function startMatch(assignments) {
-  if (phase !== 'seats') return;
-  activate(createGame({ ...settingsOf(opening), ...assignments }));
-}
-
-function seatName(side) { return game.players[side].name; }
-function seatLabel(side) { return side === game.firstSide ? 'Player 1' : 'Player 2'; }
-function seatDetails(side) {
-  const parts = [seatLabel(side)];
-  if (game.variant !== 'green') parts.push(colors[side]);
-  parts.push(game.players[side].kind === 'computer' ? 'Computer' : 'Human');
-  return parts.join(' · ');
-}
 function renderRoster() {
   const list = $('match-players');
   list.replaceChildren();
   for (const side of [game.firstSide, otherSide(game.firstSide)]) {
-    const item = document.createElement('li');
-    item.className = 'roster-seat';
-    item.dataset.side = game.variant === 'green' ? 'green' : side;
+    const row = document.createElement('li');
+    row.className = 'roster-seat';
+    row.dataset.side = game.variant === 'green' ? 'green' : side;
     const number = document.createElement('span');
     number.className = 'roster-token';
     number.setAttribute('aria-hidden', 'true');
@@ -225,207 +218,236 @@ function renderRoster() {
     role.className = 'roster-role';
     role.textContent = seatDetails(side) + (game.opponent === 'link' && game.seat === side ? ' · this device' : '');
     details.append(name, role);
-    item.append(number, details);
-    list.append(item);
+    row.append(number, details);
+    list.append(row);
   }
 }
 function renderHistory() {
-  const content = $('history-content');
-  content.replaceChildren();
-  if (!game.rows.length) {
-    const message = document.createElement('p');
-    message.className = 'empty-history';
-    message.textContent = 'The first move will appear here.';
-    content.append(message);
+  const container = $('history-content');
+  container.replaceChildren();
+  if (!game.rows.length && !game.timedOut) {
+    const empty = document.createElement('p');
+    empty.className = 'empty-history';
+    empty.textContent = 'The first cut will appear here.';
+    container.append(empty);
     return;
   }
   const list = document.createElement('ol');
   list.className = 'history-list';
   list.reversed = true;
+  if (game.timedOut) {
+    const item = document.createElement('li');
+    item.className = 'history-row';
+    item.textContent = outcome() + ' ' + seatName(game.victor) + ' wins.';
+    list.append(item);
+  }
   for (const row of [...game.rows].reverse()) {
     const item = document.createElement('li');
     item.className = 'history-row';
     const chip = document.createElement('i');
     chip.className = 'move-chip ' + row.color;
     chip.setAttribute('aria-hidden', 'true');
+    const description = document.createElement('span');
     const name = document.createElement('strong');
     name.textContent = seatName(row.side);
-    const description = document.createElement('span');
     description.append(name, document.createTextNode(' cut ' + row.color + ' branch #' + row.branch + '.'));
     item.append(chip, description);
     list.append(item);
   }
-  content.append(list);
-}
-function turnMessage() {
-  if (game.victor) return seatName(game.victor) + ' wins. ' + seatName(game.side) + ' has no move.';
-  return seatName(game.side) + ' to move. ' + seatDetails(game.side) + '.';
+  container.append(list);
 }
 function renderMatch(animation = {}) {
+  const preview = phase === 'preview';
   const human = isHumanTurn(game);
   const won = Boolean(game.victor);
   const side = game.victor ?? game.side;
   const linked = game.opponent === 'link';
-  const waiting = linked && !human && !won;
-  const invite = waiting && game.moves.length === 0;
+  const waiting = linked && !won && !human;
+  const invite = waiting && !game.moves.length;
   const card = $('turn-card');
-  card.dataset.state = won ? 'won' : 'playing';
-  card.dataset.side = side;
-  card.dataset.variant = game.variant;
-  $('turn-label').textContent = won ? 'Winner' : waiting ? 'Waiting for' : linked ? 'Your turn' : 'To move';
+  card.dataset.state = won ? 'won' : phase;
+  card.dataset.side = game.variant === 'green' ? 'green' : side;
+  $('turn-label').textContent = won ? 'Winner' : preview ? 'Drawn to open' : waiting ? 'Waiting for' : linked ? 'Your turn' : 'To move';
   $('turn-name').textContent = seatName(side);
-  $('turn-help').textContent = seatDetails(side) + (won ? ' · ' + seatName(game.side) + ' has no move.' : '');
-  $('share-turn').hidden = !linked || (!waiting && !won);
+  $('turn-help').textContent = seatDetails(side);
+  const action = won ? outcome() : preview ? 'Study the garden before the first cut.' : waiting ? '' : cutInstruction();
+  $('turn-action').textContent = action;
+  $('turn-action').hidden = !action;
+  $('clock').hidden = !game.timed || (waiting && !preview) || (won && !game.timedOut);
+  $('result-mark').hidden = !won || !!game.timedOut;
+  paintClock(game.timedOut ? 0 : game.deadline === null || preview ? TURN_MS : game.deadline - Date.now());
+  $('share-turn').hidden = preview || !linked || (!waiting && !won);
   $('share-turn').querySelector('span').textContent = won ? 'Share result' : invite ? 'Invite Player 1' : 'Share turn link';
-  $('link-area').hidden = !linked;
+  $('link-area').hidden = !linked || preview;
   if (linked) {
-    $('link-explain').textContent = invite ? 'Invite the first player, then open their reply on this device.'
-      : waiting ? 'Send the turn link to the other player. Open their reply to take your next turn.'
-        : won ? 'The final link includes the result and move history.' : 'Make a cut, then send the turn link to the other player.';
+    $('link-explain').textContent = won ? 'Send the final result to the other player.' : waiting
+      ? 'Send the link to ' + seatName(game.side) + '. Their turn starts when they open it.'
+      : 'Make a cut, then send the new turn link to the other player.';
   }
-  $('board-caption').textContent = sizes[game.difficulty] + ' board';
-  $('field-label').textContent = won ? 'Final position' : 'Playing field';
-  $('hint').hidden = !Object.values(game.players).some(player => player.kind === 'computer') || linked;
+  $('garden-name').textContent = game.board.family || 'Game board';
+  if (!preview) $('board-caption').textContent = rules[game.variant];
+  $('field-label').textContent = won ? 'Final position' : preview ? 'Opening look' : game.boardVersion === 3 ? 'Expert garden' : 'Playing field';
+  $('hint').hidden = !Object.values(game.players).some(player => player.kind === 'computer') || linked || won;
   $('hint').disabled = !human;
   $('hint').setAttribute('aria-pressed', String(!!hintId));
-  $('undo').hidden = linked || Object.values(game.players).every(player => player.kind === 'computer');
+  $('undo').hidden = game.timed || linked || Object.values(game.players).every(player => player.kind === 'computer');
   $('undo').disabled = !canUndo(game);
-  $('restart').title = 'Preview this board again and choose new seats';
-  variantControls(game);
-  showKey(game.variant);
+  showKey();
   renderRoster();
   if ($('history-panel').open) renderHistory();
-  boardView.update({ board: game.board, live: game.live, side: game.side, locked: !human, hintId, ...animation });
+  boardView.update({ board: game.board, live: game.live, side: game.side, locked: preview || !human, hintId, ...animation });
 }
-
-function scheduleComputer() {
+function sameMoves(a, b) { return a.length === b.length && a.every((id, i) => id === b[i]); }
+function newerStoredPosition() {
+  if (!game.matchId) return null;
+  const latest = game.opponent === 'link'
+    ? linkGames().find(item => item.matchId === game.matchId) : readStorage(currentKey);
+  if (latest?.matchId !== game.matchId || !Array.isArray(latest.moves)) return null;
+  const advanced = latest.moves.length > game.moves.length;
+  const conflicting = latest.moves.length === game.moves.length && !sameMoves(latest.moves, game.moves);
+  const finished = latest.timedOut && !game.timedOut && latest.moves.every((id, i) => game.moves[i] === id);
+  if (!advanced && !conflicting && !finished) return null;
+  return restoreGame(latest);
+}
+function syncPosition() {
+  const updated = newerStoredPosition();
+  if (!updated) return false;
+  activate(updated, { note: 'The match advanced in another tab.' });
+  return true;
+}
+function checkDeadline(now) {
+  const resolved = expireTurn(game, now);
+  if (resolved === game) return false;
+  if (syncPosition()) return true;
+  activate(resolved);
+  return true;
+}
+function tick() {
+  clearTimeout(displayTimer);
+  if (phase !== 'playing' || game.deadline === null) return;
+  const now = Date.now();
+  if (checkDeadline(now)) return;
+  const remaining = game.deadline - now;
+  if ($('clock-value').textContent !== '3' && Math.ceil(remaining / 1000) === 3 && isHumanTurn(game)) {
+    announce(seatName(game.side) + ' has three seconds left.');
+  }
+  paintClock(remaining);
+  displayTimer = setTimeout(tick, Math.min(100, remaining));
+}
+function scheduleTurn() {
   clearTimeout(computerTimer);
+  tick();
   if (phase !== 'playing' || game.victor || game.opponent === 'link' || game.players[game.side].kind !== 'computer') return;
-  const pending = game;
+  const position = game;
   computerTimer = setTimeout(() => {
-    if (phase !== 'playing' || game !== pending) return;
+    if (phase !== 'playing' || game !== position || checkDeadline(Date.now())) return;
     const move = chooseMove(game.board, game.live, game.side);
     if (move.edgeId !== null) makeMove(move.edgeId);
-  }, 750);
+  }, 700);
 }
 function makeMove(id) {
-  if (phase !== 'playing') return;
-  if (game.opponent === 'link') {
-    const latest = recentLinkGames().find(item => matchKey(item) === matchKey(game));
-    if (latest && latest.moves?.length >= game.moves.length && JSON.stringify(latest.moves) !== JSON.stringify(game.moves)) {
-      const shared = restoreGame(latest);
-      if (shared) { activate(shared, 'The shared game advanced in another tab.'); return; }
-    }
-  }
-  const next = playCut(game, id);
+  if (phase !== 'playing' || game.victor || syncPosition()) return;
+  const now = Date.now();
+  if (checkDeadline(now)) return;
+  const next = playCut(game, id, now);
   if (!next) return;
-  game = next;
+  game = startTurnClock(next, now);
   hintId = null;
   const last = game.rows.at(-1);
   feedback();
-  persist();
-  if (game.opponent === 'link') setHash(encodeTurn(game));
+  saveMatch();
   renderMatch({ removed: last.fallen, cutId: last.edgeId });
   announce(seatName(last.side) + ' cut branch ' + last.branch + '. ' + turnMessage());
-  scheduleComputer();
+  scheduleTurn();
 }
-function activate(next, note = '') {
+function endPreview() {
+  if (phase !== 'preview') return;
+  activate(game);
+}
+function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
   cancelTimers();
-  playerForm.close();
-  phase = 'playing';
-  opening = null;
-  game = next;
+  const now = Date.now();
+  game = expireTurn(next, now);
+  previewUntil = !game.victor && Number.isSafeInteger(previewEnd) && previewEnd > now ? Math.min(previewEnd, now + 2000) : 0;
+  game = startTurnClock(game, previewUntil || now);
+  lobby = null;
   hintId = null;
-  writeStorage(openingKey, null, true);
-  persist();
-  if (game.opponent === 'link') setHash(encodeTurn(game));
-  else if (location.hash.startsWith('#turn=')) setHash('');
-  $('game-table').dataset.phase = phase;
-  $('ready-view').hidden = true;
-  $('field').hidden = false;
-  $('board-tools').hidden = false;
-  $('history-panel').hidden = false;
-  $('setup-panel').hidden = false;
-  $('settings-fields').hidden = true;
-  $('match-players').hidden = false;
-  $('new-game').hidden = false;
-  $('guide-nav').disabled = false;
-  $('setup-title').textContent = 'Players';
+  if ($('share-dialog').open) $('share-dialog').close();
+  if (game.victor && $('guide-dialog').open) $('guide-dialog').close();
+  writeStorage(lobbyKey, null, true);
+  setPhase(previewUntil ? 'preview' : 'playing');
+  saveMatch();
   feedback(note);
   renderMatch({ reset: true });
-  announce(note || turnMessage());
-  scheduleComputer();
+  if (scroll) {
+    $('game-table').focus({ preventScroll: true });
+    $('game-table').scrollIntoView({ block: 'nearest', behavior: 'instant' });
+  }
+  if (previewUntil) {
+    announce(seatName(game.firstSide) + ' drew the first move. Two seconds to study the garden.');
+    cancelPreview = timeBoardPreview(seconds => {
+      $('board-caption').textContent = 'First cut in ' + seconds + 's';
+    }, endPreview, previewUntil - Date.now());
+  } else {
+    announce(note || turnMessage());
+    scheduleTurn();
+  }
 }
 function loadLocation() {
-  const savedData = readStorage(currentKey);
-  const savedGame = savedData && (savedData.boardVersion || savedData.moves?.length) ? restoreGame(savedData) : null;
+  const saved = readStorage(currentKey);
   if (location.hash.startsWith('#turn=')) {
-    const linked = decodeTurn(location.hash);
-    if (linked) {
-      const known = recentLinkGames().find(item => matchKey(item) === matchKey(linked));
-      const incoming = receiveLink(linked, known);
-      if (incoming.game) { activate(incoming.game, incoming.note); return; }
+    const packet = decodeTurn(location.hash);
+    if (packet) {
+      const known = linkGames().find(item => matchKey(item) === matchKey(packet));
+      const incoming = receiveLink(packet, known);
+      if (incoming.game) {
+        const previewEnd = known ? known.previewUntil : incoming.game.timed && !incoming.game.moves.length ? Date.now() + 2000 : 0;
+        activate(incoming.game, { note: incoming.note, previewEnd });
+        return;
+      }
     }
     setHash('');
-    if (savedGame) activate(savedGame);
-    else readyForGame();
+    game = restoreGame(saved);
+    enterLobby();
     feedback('This turn link is incomplete or invalid. Ask the sender for the full link.');
     return;
   }
-  if (opening || game) return;
-  const pending = readStorage(openingKey, true);
-  if (validOpening(pending)) {
-    game = savedGame;
-    readyForGame(settingsOf(pending));
-    if (pending.phase === 'seats') {
-      opening.choices = pending.choices;
-      choosePlayers();
-    }
-  } else if (savedGame) activate(savedGame);
-  else readyForGame();
+  game = restoreGame(saved);
+  const pending = readStorage(lobbyKey, true);
+  if (pending && ['redblue','green'].includes(pending.variant)) enterLobby(pending);
+  else if (game?.boardVersion === 3) activate(game, { previewEnd: saved.previewUntil });
+  else enterLobby();
 }
 
-$('new-game').addEventListener('click', () => readyForGame());
-$('reveal').addEventListener('click', revealBoard);
-$('resume').addEventListener('click', () => { if (game) activate(game); });
-$('variant-green').addEventListener('click', () => {
-  if ((opening || game).variant !== 'green') readyForGame({ variant: 'green' });
+$('new-game').addEventListener('click', () => enterLobby());
+$('resume').addEventListener('click', () => {
+  if (game) activate(newerStoredPosition() || restoreGame(saveData(game)) || game);
 });
-$('variant-redblue').addEventListener('click', () => {
-  if ((opening || game).variant === 'green') readyForGame({ variant: 'redblue' });
-});
-$('mixed-toggle').addEventListener('change', event => {
-  if (phase === 'ready') readyForGame({ variant: event.currentTarget.checked ? 'mixed' : 'redblue' });
-});
-$('difficulty').addEventListener('change', event => {
-  if (phase === 'ready') readyForGame({ difficulty: event.currentTarget.value });
-});
+$('variant-green').addEventListener('click', () => chooseRules('green'));
+$('variant-redblue').addEventListener('click', () => chooseRules('redblue'));
 $('restart').addEventListener('click', () => {
-  if (phase !== 'playing') return;
-  readyForGame(settingsOf(game));
-  revealBoard();
+  if (phase === 'playing') enterLobby({ variant: game.variant, seed: game.boardVersion === 3 ? game.seed : undefined });
 });
 $('undo').addEventListener('click', () => {
-  if (phase !== 'playing' || !canUndo(game)) return;
-  activate(undoTurn(game), 'Turn taken back.');
+  if (phase === 'playing' && canUndo(game)) activate(undoTurn(game), { note: 'Turn taken back.' });
 });
 $('zoom').addEventListener('click', () => setZoom($('zoom').getAttribute('aria-pressed') !== 'true'));
 $('history-panel').addEventListener('toggle', () => {
   if (phase === 'playing' && $('history-panel').open) renderHistory();
 });
 $('hint').addEventListener('click', () => {
-  if (phase !== 'playing' || !isHumanTurn(game)) return;
+  if (phase !== 'playing' || !isHumanTurn(game) || checkDeadline(Date.now())) return;
   if (hintId) { hintId = null; feedback(); renderMatch(); return; }
   const move = chooseMove(game.board, game.live, game.side);
-  if (move.edgeId === null) return;
+  if (move.edgeId === null || checkDeadline(Date.now())) return;
   hintId = move.edgeId;
   const index = game.board.edges.findIndex(edge => edge.id === hintId) + 1;
-  const text = move.proven && move.winning ? 'Branch #' + index + ' is a winning cut with perfect play.'
-    : 'Try the highlighted branch, #' + index + '.';
-  feedback(text);
+  feedback(move.proven && move.winning ? 'Branch #' + index + ' wins with perfect play.' : 'Try the highlighted branch, #' + index + '.');
   renderMatch();
 });
-$('guide-nav').addEventListener('click', () => guide.open((opening || game).variant));
+function openGuide() { guide.open((lobby || game).variant, lobby ? true : game.timed); }
+$('guide-nav').addEventListener('click', openGuide);
+$('practice').addEventListener('click', openGuide);
 for (const anchor of document.querySelectorAll('a[href="#game-table"]')) {
   anchor.addEventListener('click', event => {
     event.preventDefault();
@@ -442,10 +464,10 @@ $('share-turn').addEventListener('click', () => {
   const url = new URL(base);
   url.hash = encodeTurn(game);
   $('share-url').value = url.href;
-  const invite = !game.moves.length && !game.victor;
-  $('share-title').textContent = game.victor ? 'Share the result' : invite ? 'Invite Player 1' : 'Pass the turn';
-  $('share-description').textContent = game.victor ? 'The link includes the final board and both players’ moves.'
-    : 'Send this link to ' + seatName(game.side) + ' (' + seatDetails(game.side) + '). They can open it, make their cut, and send the turn back.';
+  $('share-title').textContent = game.victor ? 'Share the result' : game.moves.length ? 'Pass the turn' : 'Invite Player 1';
+  $('share-description').textContent = game.victor ? turnMessage()
+    : 'Send this link to ' + seatName(game.side) + ' (' + seatDetails(game.side) + '). ' +
+    (game.timed ? 'Open it when ready to play. Time in transit is free.' : 'Open it, make a cut, and send the turn back.');
   $('share-note').textContent = '';
   shareDialog.showModal();
   $('copy-link').focus();
@@ -453,11 +475,18 @@ $('share-turn').addEventListener('click', () => {
 $('copy-link').addEventListener('click', async () => {
   const input = $('share-url');
   if (await copyText(input.value)) $('share-note').textContent = 'Game link copied.';
-  else { input.focus(); input.select(); $('share-note').textContent = 'Select Copy to copy the highlighted link.'; }
+  else { input.focus(); input.select(); $('share-note').textContent = 'Copy the highlighted link.'; }
 });
 
-document.addEventListener('visibilitychange', () => {
-  if (phase === 'preview' && document.hidden) choosePlayers();
+function refreshTime() {
+  if (!game || phase === 'ready' || syncPosition()) return;
+  if (phase === 'preview' && Date.now() >= previewUntil) endPreview();
+  else if (phase === 'playing') tick();
+}
+document.addEventListener('visibilitychange', refreshTime);
+window.addEventListener('pageshow', refreshTime);
+window.addEventListener('storage', event => {
+  if (game && phase !== 'ready' && (event.key === currentKey || event.key === linksKey)) syncPosition();
 });
 window.addEventListener('hashchange', loadLocation);
 loadLocation();

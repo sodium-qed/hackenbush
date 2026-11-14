@@ -3,15 +3,15 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#f7f7ef">
-  <meta name="description" content="Play Green or Red–Blue Hackenbush. Study the board for two seconds, choose your players and sides, then make the last cut.">
+  <meta name="theme-color" content="#f6f3e9">
+  <meta name="description" content="Play Expert Green or Red–Blue Hackenbush. Enter both names, draw seats, and make a cut in ten seconds on a garden of interlocking branches.">
   <title>Hackenbush · Groundwork</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="preload" href="./fonts/instrument-serif.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./style.css?v=2">
-  <link rel="stylesheet" href="./board.css">
-  <link rel="stylesheet" href="./guide.css?v=2">
-  <link rel="stylesheet" href="./players.css?v=2">
+  <link rel="stylesheet" href="./style.css?v=3">
+  <link rel="stylesheet" href="./board.css?v=3">
+  <link rel="stylesheet" href="./guide.css?v=3">
+  <link rel="stylesheet" href="./players.css?v=3">
 </head>
 <body>
   <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -55,34 +55,21 @@
   </header>
   <main class="wrap">
     <section class="hero" aria-labelledby="title">
-      <div><h1 id="title">Hackenbush</h1>
-        <p>Cut a branch. Everything disconnected from the ground falls.<br class="wide-break"> Make the last move to win.</p>
+      <div class="hero-copy"><h1 id="title">Hackenbush</h1>
+        <p>Cut a branch. Everything it disconnects from the ground falls.<br>Make the last move to win.</p>
       </div>
-      <button class="primary new-game" type="button" id="new-game" hidden><svg class="icon"><use href="#i-die"/></svg>New game</button>
+      <img class="hero-art" src="./art/garden-engraving.webp" alt="" width="650" height="215" fetchpriority="high">
     </section>
     <div id="game-table" class="table-layout" data-phase="ready" tabindex="-1">
       <div class="play-column">
         <section class="board-card panel" aria-label="Game board">
           <div class="board-top">
-            <div class="variants" role="group" aria-label="Game variant">
-              <button type="button" class="variant" id="variant-green" aria-pressed="false"><svg class="icon"><use href="#i-branch"/></svg>Green</button>
+            <div class="variants" id="variants" role="group" aria-label="Game rules">
               <button type="button" class="variant" id="variant-redblue" aria-pressed="true"><span class="rb-icon" aria-hidden="true"><i></i><i></i></span>Red–Blue</button>
+              <button type="button" class="variant" id="variant-green" aria-pressed="false"><svg class="icon"><use href="#i-branch"/></svg>Green</button>
             </div>
-            <span id="board-caption" class="board-caption">Match setup</span>
-          </div>
-          <div id="ready-view" class="ready-view">
-            <div class="ready-copy">
-              <h2>Before the first cut</h2>
-              <p>Study the board for two seconds. Once it’s hidden, choose the players and who goes first.</p>
-              <div class="opening-actions"><button type="button" class="primary" id="reveal"><svg class="icon" aria-hidden="true"><use href="#i-eye"/></svg>Reveal board</button><button type="button" id="resume" class="resume" hidden>Back to current game</button></div>
-            </div>
-            <svg class="opening-clock" viewBox="0 0 180 180" aria-hidden="true" fill="none">
-              <g stroke="currentColor" stroke-linecap="round"><path d="M81 19h18m-14-5h10v5H85zM90 20v8m40 8 7-7m-2-2 5 5" stroke-width="2.2"/>
-              <circle cx="90" cy="94" r="63" stroke-width="1.4"/><circle cx="90" cy="94" r="56" stroke-dasharray="1 6.4" stroke-width="4"/>
-              <path d="M90 44a50 50 0 0 1 42 22" stroke="#5981a2" stroke-width="4"/><path d="M135 72a50 50 0 0 1 5 22" stroke="#b56a50" stroke-width="4"/>
-              <path d="m90 56 .3 6m36.7 31 7 .2m-44.3 37 .3 7m-38-44.2 6 .2" stroke-width="2"/>
-              </g><text x="87" y="109" text-anchor="middle" fill="currentColor" font-family="Georgia,serif" font-size="44" letter-spacing="-4">2<tspan font-size="23" dx="3">s</tspan></text>
-            </svg>
+            <div class="garden-title" id="garden-title" hidden><svg class="icon" aria-hidden="true"><use href="#i-branch"/></svg><h2 id="garden-name">Garden</h2></div>
+            <div class="board-context"><span id="board-caption" class="board-caption">Expert garden</span><button class="secondary new-game" type="button" id="new-game" hidden><svg class="icon"><use href="#i-die"/></svg>New game</button></div>
           </div>
           <div id="players-view" tabindex="-1" hidden></div>
           <div class="field" id="field" hidden>
@@ -104,19 +91,28 @@
       </div>
       <aside class="side-column" aria-label="Match controls">
         <section class="turn-card" id="turn-card" aria-labelledby="turn-name">
-          <div class="turn-top"><div><div class="turn-label"><i></i><span id="turn-label">Game rules</span></div><h2 id="turn-name">Red–Blue</h2></div>
-            <svg class="seat-mark" id="seat-mark" viewBox="0 0 80 80" fill="none" aria-hidden="true"><circle class="seat-outer" cx="40" cy="40" r="34"/><circle class="seat-inner" cx="40" cy="40" r="28"/><g class="seat-branch" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.1"><path d="M28 54h24m-14 0V33l-9-7m9 17 12-11m-7 6V24"/><circle cx="28.5" cy="25.5" r="2.5"/><circle cx="43" cy="23" r="2.5"/><circle cx="51" cy="31" r="2.5"/></g><svg class="winner-mark" x="24" y="23" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#i-trophy"/></svg><g class="seat-stars" fill="currentColor"><circle cx="40" cy="6" r="1.6"/><circle cx="74" cy="40" r="1.6"/><circle cx="40" cy="74" r="1.6"/><circle cx="6" cy="40" r="1.6"/></g></svg>
+          <div class="turn-top">
+            <div class="turn-identity"><div class="turn-label"><i></i><span id="turn-label">Per turn</span></div><h2 id="turn-name">Turn clock</h2></div>
+            <div id="clock" class="clock" role="timer" aria-live="off" aria-label="Turn clock in seconds">
+              <svg class="clock-face" viewBox="0 0 80 80" aria-hidden="true"><circle class="clock-ticks" cx="40" cy="40" r="37"/><circle class="clock-track" cx="40" cy="40" r="31"/><circle id="clock-arc" class="clock-arc" cx="40" cy="40" r="31" pathLength="100"/></svg>
+              <span class="clock-reading"><b id="clock-value">10</b><span>s</span></span>
+            </div>
+            <svg class="result-mark icon" id="result-mark" aria-hidden="true" hidden><use href="#i-trophy"/></svg>
           </div>
-          <p id="turn-help">Each player cuts branches of their own color. Either color can go first.</p>
+          <p id="turn-help">Each player gets ten seconds to make a cut.</p>
+          <p class="turn-action" id="turn-action" hidden></p>
           <button type="button" class="turn-share" id="share-turn" hidden><svg class="icon"><use href="#i-link"/></svg><span>Share turn link</span></button>
         </section>
-        <section class="panel setup-panel" id="setup-panel" aria-labelledby="setup-title">
-          <div class="section-top"><h2 id="setup-title">Board settings</h2><svg class="icon section-icon"><use href="#i-sliders"/></svg></div>
-          <div id="settings-fields"><div class="setting"><label for="difficulty">Board size</label><div class="select-wrap"><svg class="icon leading"><use href="#i-size"/></svg><select id="difficulty"><option value="small">Small</option><option value="standard" selected>Standard</option><option value="large">Large</option></select><svg class="icon chevron"><use href="#i-chevron"/></svg></div></div>
-          <label class="toggle-row" id="mixed-row" hidden><span>Shared green branches</span><input type="checkbox" id="mixed-toggle"><span class="switch" aria-hidden="true"></span></label>
+        <section class="panel setup-panel" aria-labelledby="setup-title">
+          <div class="section-top"><h2 id="setup-title">At the table</h2><svg class="icon section-icon" aria-hidden="true"><use href="#i-book"/></svg></div>
+          <div id="opening-rules" class="opening-rules">
+            <p id="color-rule">Cut branches of your own color. Either color can go first.</p>
+            <p>Loops can keep a flower or tree grounded after a support is cut.</p>
+            <button id="practice" type="button" class="practice"><svg class="icon"><use href="#i-book"/></svg>Try a practice cut <span aria-hidden="true">↗</span></button>
           </div>
           <ol id="match-players" class="match-players" aria-label="Players in turn order" hidden></ol>
           <div id="link-area" hidden><p id="link-explain"></p></div>
+          <button type="button" id="resume" class="resume" hidden>Back to previous match</button>
         </section>
       </aside>
     </div>
@@ -132,15 +128,17 @@
   <noscript>Enable JavaScript to play Hackenbush.</noscript>
   <script type="importmap">
     { "imports": {
-      "./js/generator.js": "./js/generator.js?v=2",
-      "./js/guide.js": "./js/guide.js?v=2",
-      "./js/linkplay.js": "./js/linkplay.js?v=2",
-      "./js/players.js": "./js/players.js?v=2",
-      "./js/preview.js": "./js/preview.js?v=2",
-      "./js/session.js": "./js/session.js?v=2",
-      "./js/strategy.js": "./js/strategy.js?v=2"
+      "./js/board.js": "./js/board.js?v=3",
+      "./js/draw.js": "./js/draw.js?v=3",
+      "./js/generator.js": "./js/generator.js?v=3",
+      "./js/guide.js": "./js/guide.js?v=3",
+      "./js/linkplay.js": "./js/linkplay.js?v=3",
+      "./js/players.js": "./js/players.js?v=3",
+      "./js/preview.js": "./js/preview.js?v=3",
+      "./js/session.js": "./js/session.js?v=3",
+      "./js/strategy.js": "./js/strategy.js?v=3"
     } }
   </script>
-  <script type="module" src="./js/app.js?v=2"></script>
+  <script type="module" src="./js/app.js?v=3"></script>
 </body>
 </html>
