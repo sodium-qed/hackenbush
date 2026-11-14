@@ -206,6 +206,7 @@ function activate(next, note = '') {
   if (game.opponent === 'link' && game.moves.length) replaceHash(encodeTurn(game));
   else if (location.hash.startsWith('#turn=')) replaceHash('');
   render({ reset: true });
+  announce(note || (game.victor ? winTitle() + ' ' + outcomeText() : turnAnnouncement()));
   scheduleComputer();
 }
 function restartWith(settings, note) {
