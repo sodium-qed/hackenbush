@@ -2,6 +2,7 @@ import { botanicalGarden } from './garden-layouts.js';
 import { composeMap } from './map-catalog.js';
 import { CURRENT_BOARD_VERSION } from './map-seed.js';
 import { generateWorld } from './world-generator.js';
+import { CUSTOM_BOARD_VERSION, readCustomBoard } from './custom-board.js';
 
 const GROUND_Y = 244;
 const LEFT = 35;
@@ -547,6 +548,11 @@ function networkForSeed(label, size) {
 }
 
 export function generateBoard(seed, variant = 'green', difficulty = 'expert', boardVersion = CURRENT_BOARD_VERSION) {
+  if (boardVersion === CUSTOM_BOARD_VERSION) {
+    const custom = readCustomBoard(seed);
+    if (!custom || custom.variant !== variant) throw new RangeError('Invalid custom board for this ruleset.');
+    return custom.board;
+  }
   if (boardVersion === 5 || boardVersion === '5') {
     const code = seed === undefined ? 'A35D7E' : seed;
     const { roots, loads, ...board } = generateWorld(code);

@@ -47,6 +47,9 @@
 .hb-players__field label, .hb-players__device > label {
   display: block; margin: 0 0 4px; color: #586252; font-size: 11px; font-weight: 600; line-height: 1.3;
 }
+.hb-players__level { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.hb-players__level label { margin: 0; }
+.hb-players__level .hb-players__select { width: min(50%, 150px); }
 .hb-players__select { position: relative; color: #586650; }
 .hb-players__select .hb-players__icon {
   position: absolute; top: 50%; right: 8px; width: 13px; height: 13px; transform: translateY(-50%);

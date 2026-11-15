@@ -4,17 +4,19 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f6f2e8">
-  <meta name="description" content="Play Green or Red–Blue Hackenbush. Cut branches, uncover new landscapes, and practice on a sunflower before drawing seats for a match.">
+  <meta name="description" content="Play Green or Red–Blue Hackenbush on a seeded garden or a board you draw. Challenge a computer, try a lesson, and explore the value of each cut after a match.">
   <title>Hackenbush · Groundwork</title>
-  <link rel="icon" href="./favicon.svg?v=5" type="image/svg+xml">
+  <link rel="icon" href="./favicon.svg?v=6" type="image/svg+xml">
   <link rel="preload" href="./fonts/instrument-serif.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./style.css?v=5">
-  <link rel="stylesheet" href="./board.css?v=5">
-  <link rel="stylesheet" href="./guide.css?v=5">
-  <link rel="stylesheet" href="./players.css?v=5">
-  <link rel="stylesheet" href="./landscape.css?v=5">
-  <link rel="stylesheet" href="./practice.css?v=5">
-  <link rel="stylesheet" href="./audio.css?v=5">
+  <link rel="stylesheet" href="./style.css?v=6">
+  <link rel="stylesheet" href="./board.css?v=6">
+  <link rel="stylesheet" href="./guide.css?v=6">
+  <link rel="stylesheet" href="./players.css?v=6">
+  <link rel="stylesheet" href="./landscape.css?v=6">
+  <link rel="stylesheet" href="./practice.css?v=6">
+  <link rel="stylesheet" href="./audio.css?v=6">
+  <link rel="stylesheet" href="./builder.css?v=6">
+  <link rel="stylesheet" href="./analyzer.css?v=6">
 </head>
 <body data-phase="ready">
   <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -24,7 +26,8 @@
       <symbol id="i-book" viewBox="0 0 24 24"><path d="M3 5.5c3.1-1.1 6-.8 9 1.1 3-1.9 5.9-2.2 9-1.1v13c-3.1-1.1-6-.8-9 1.1-3-1.9-5.9-2.2-9-1.1zM12 6.6v13"/></symbol>
       <symbol id="i-external" viewBox="0 0 24 24"><path d="M6 18 18 6M7 6h11v11"/></symbol>
       <symbol id="i-github" viewBox="0 0 24 24"><path fill="currentColor" stroke="none" d="M12 .9a11.1 11.1 0 0 0-3.5 21.63c.55.1.75-.24.75-.53v-2.06c-3.05.65-3.7-1.28-3.7-1.28-.5-1.26-1.23-1.6-1.23-1.6-1-.68.08-.67.08-.67 1.11.08 1.69 1.13 1.69 1.13.97 1.7 2.57 1.21 3.2.92.1-.72.38-1.21.69-1.49-2.44-.27-5.02-1.22-5.02-5.49 0-1.21.44-2.2 1.14-2.98-.11-.3-.49-1.43.11-2.95 0 0 .92-.3 3.01 1.13a10.52 10.52 0 0 1 5.5 0c2.1-1.43 3.02-1.13 3.02-1.13.6 1.52.22 2.65.11 2.95.71.78 1.13 1.77 1.13 2.98 0 4.28-2.58 5.21-5.03 5.48.39.34.75 1.01.75 2.04V22c0 .29.19.64.76.53A11.1 11.1 0 0 0 12 .9Z"/></symbol>
-      <symbol id="i-hint" viewBox="0 0 24 24"><path d="M8.4 15.9c0-1.8-2.5-2.4-2.5-6.2a6.1 6.1 0 1 1 12.2 0c0 3.8-2.5 4.4-2.5 6.2l-.6 1.2H9zM9.7 20h4.6M12 16v-4m-2-2 2 2 2-2"/></symbol>
+      <symbol id="i-draw" viewBox="0 0 24 24"><path d="m4 16-1 5 5-1L20 8l-4-4ZM14 6l4 4M12 21h9"/></symbol>
+      <symbol id="i-chart" viewBox="0 0 24 24"><path d="M4 3v17h17M7 14l4-5 4 2 5-6"/></symbol>
       <symbol id="i-undo" viewBox="0 0 24 24"><path d="m9 5-5 5 5 5M5 10h9a5.5 5.5 0 0 1 0 11"/></symbol>
       <symbol id="i-restart" viewBox="0 0 24 24"><path d="M4.2 10.1a8.1 8.1 0 1 1 .5 6.4M4 4.8v5.6h5.7"/></symbol>
       <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="2.7"/></symbol>
@@ -116,16 +119,23 @@
             </div>
             <p class="sr-only" id="opening-rules"><span id="color-rule">Red cuts red. Blue cuts blue. Colors and the opening player are drawn at random.</span></p>
           </div>
-          <details id="seed-entry" class="seed-entry">
-            <summary>
-              <span class="seed-label"><svg class="icon" aria-hidden="true"><use href="#i-seed"/></svg>Map seed</span>
-              <span class="seed-summary"><span id="seed-summary">Random · 16,777,216 maps</span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></span>
-            </summary>
-            <div class="seed-controls">
-              <label for="map-seed">Seed code<input id="map-seed" type="text" placeholder="A35D7E" spellcheck="false" autocapitalize="characters" autocomplete="off" aria-describedby="seed-help"></label>
-              <p id="seed-help">Enter six digits using 0–9 or A–F to replay a map. Leave blank for a random draw.</p>
+          <div class="board-source" id="board-source">
+            <details id="seed-entry" class="seed-entry">
+              <summary>
+                <span class="seed-label"><svg class="icon" aria-hidden="true"><use href="#i-seed"/></svg>Map seed</span>
+                <span class="seed-summary"><span id="seed-summary">Random · 16,777,216 maps</span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></span>
+              </summary>
+              <div class="seed-controls">
+                <label for="map-seed">Seed code<input id="map-seed" type="text" placeholder="A35D7E" spellcheck="false" autocapitalize="characters" autocomplete="off" aria-describedby="seed-help"></label>
+                <p id="seed-help">Enter six digits using 0–9 or A–F to replay a map. Leave blank for a random draw.</p>
+              </div>
+            </details>
+            <div class="custom-selection" id="custom-selection" hidden>
+              <div><strong id="custom-name"></strong><small id="custom-count"></small></div>
+              <button class="rules-help" type="button" id="use-map">Use a map seed</button>
             </div>
-          </details>
+            <button class="secondary builder-launch" type="button" id="build-board" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#i-draw"/></svg><span>Build a board</span></button>
+          </div>
           <div id="players-view" tabindex="-1" hidden></div>
 
           <div class="field" id="field" hidden>
@@ -136,8 +146,7 @@
             <div class="board-scroll" id="board-scroll" tabindex="-1"><div id="board"></div><ol id="landmarks" class="landmarks" aria-label="Landmarks from left to right" hidden></ol></div>
           </div>
           <div class="board-tools" id="board-tools" hidden>
-            <button id="share-map" type="button" class="tool-action seed-action" hidden><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Seed <code id="map-code"></code></span></button>
-            <button id="hint" type="button" class="tool-action"><svg class="icon" aria-hidden="true"><use href="#i-hint"/></svg>Hint</button>
+            <button id="share-map" type="button" class="tool-action seed-action" hidden><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span><span id="share-map-label">Seed</span> <code id="map-code"></code></span></button>
             <button id="undo" type="button" class="tool-action" disabled><svg class="icon" aria-hidden="true"><use href="#i-undo"/></svg>Undo</button>
             <button id="scenery-toggle" type="button" class="tool-action" aria-pressed="true"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="8" cy="9" r="1.4"/><path d="m4 17 5-5 4 4 3-4 4 5"/></svg>Scenery</button>
             <button id="zoom" type="button" class="tool-action zoom" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#i-zoom"/></svg><span>Zoom board</span></button>
@@ -164,6 +173,7 @@
           </div>
           <p id="turn-help">Each player gets ten seconds to make a cut.</p>
           <p class="turn-action" id="turn-action" hidden></p>
+          <button type="button" class="turn-share analyze-game" id="analyze-game" aria-haspopup="dialog" hidden><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>Analyze game</button>
           <button type="button" class="turn-share" id="share-turn" hidden><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Share turn link</span></button>
         </section>
         <section class="panel setup-panel" aria-labelledby="setup-title">
@@ -175,6 +185,8 @@
     </div>
   </main>
   <dialog id="guide-dialog"></dialog>
+  <dialog id="builder-dialog"></dialog>
+  <dialog id="analyzer-dialog"></dialog>
   <dialog id="sound-dialog"></dialog>
   <dialog id="share-dialog" class="form-dialog" aria-labelledby="share-title" aria-describedby="share-description">
     <div class="dialog-inner"><div class="dialog-heading"><h2 id="share-title">Share this turn</h2><button class="icon-button" data-close type="button" aria-label="Close share dialog"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
@@ -187,35 +199,42 @@
   <script type="importmap">
     {
       "imports": {
-        "./js/audio.js": "./js/audio.js?v=5",
-        "./js/board.js": "./js/board.js?v=5",
-        "./js/draw.js": "./js/draw.js?v=5",
-        "./js/garden-layouts.js": "./js/garden-layouts.js?v=5",
-        "./js/generator.js": "./js/generator.js?v=5",
-        "./js/guide.js": "./js/guide.js?v=5",
-        "./js/landscape.js": "./js/landscape.js?v=5",
-        "./js/linkplay.js": "./js/linkplay.js?v=5",
-        "./js/map-catalog.js": "./js/map-catalog.js?v=5",
-        "./js/map-seed.js": "./js/map-seed.js?v=5",
-        "./js/maps/habitats.js": "./js/maps/habitats.js?v=5",
-        "./js/maps/structures.js": "./js/maps/structures.js?v=5",
-        "./js/maps/water.js": "./js/maps/water.js?v=5",
-        "./js/maps/woodland.js": "./js/maps/woodland.js?v=5",
-        "./js/players.js": "./js/players.js?v=5",
-        "./js/practice.js": "./js/practice.js?v=5",
-        "./js/preview.js": "./js/preview.js?v=5",
-        "./js/region-art.js": "./js/region-art.js?v=5",
-        "./js/regions.js": "./js/regions.js?v=5",
-        "./js/rules.js": "./js/rules.js?v=5",
-        "./js/scenery.js": "./js/scenery.js?v=5",
-        "./js/session.js": "./js/session.js?v=5",
-        "./js/strategy.js": "./js/strategy.js?v=5",
-        "./js/world-generator.js": "./js/world-generator.js?v=5",
-        "./js/world-growth.js": "./js/world-growth.js?v=5",
-        "./js/world-weave.js": "./js/world-weave.js?v=5"
+        "./js/analysis-values.js": "./js/analysis-values.js?v=6",
+        "./js/analysis-worker.js": "./js/analysis-worker.js?v=6",
+        "./js/analyzer.js": "./js/analyzer.js?v=6",
+        "./js/audio.js": "./js/audio.js?v=6",
+        "./js/board.js": "./js/board.js?v=6",
+        "./js/builder.js": "./js/builder.js?v=6",
+        "./js/custom-board.js": "./js/custom-board.js?v=6",
+        "./js/draw.js": "./js/draw.js?v=6",
+        "./js/garden-layouts.js": "./js/garden-layouts.js?v=6",
+        "./js/generator.js": "./js/generator.js?v=6",
+        "./js/guide-lessons.js": "./js/guide-lessons.js?v=6",
+        "./js/guide.js": "./js/guide.js?v=6",
+        "./js/landscape.js": "./js/landscape.js?v=6",
+        "./js/linkplay.js": "./js/linkplay.js?v=6",
+        "./js/map-catalog.js": "./js/map-catalog.js?v=6",
+        "./js/map-seed.js": "./js/map-seed.js?v=6",
+        "./js/maps/habitats.js": "./js/maps/habitats.js?v=6",
+        "./js/maps/structures.js": "./js/maps/structures.js?v=6",
+        "./js/maps/water.js": "./js/maps/water.js?v=6",
+        "./js/maps/woodland.js": "./js/maps/woodland.js?v=6",
+        "./js/opponents.js": "./js/opponents.js?v=6",
+        "./js/players.js": "./js/players.js?v=6",
+        "./js/practice.js": "./js/practice.js?v=6",
+        "./js/preview.js": "./js/preview.js?v=6",
+        "./js/region-art.js": "./js/region-art.js?v=6",
+        "./js/regions.js": "./js/regions.js?v=6",
+        "./js/rules.js": "./js/rules.js?v=6",
+        "./js/scenery.js": "./js/scenery.js?v=6",
+        "./js/session.js": "./js/session.js?v=6",
+        "./js/strategy.js": "./js/strategy.js?v=6",
+        "./js/world-generator.js": "./js/world-generator.js?v=6",
+        "./js/world-growth.js": "./js/world-growth.js?v=6",
+        "./js/world-weave.js": "./js/world-weave.js?v=6"
       }
     }
   </script>
-  <script type="module" src="./js/app.js?v=5"></script>
+  <script type="module" src="./js/app.js?v=6"></script>
 </body>
 </html>

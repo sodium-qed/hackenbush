@@ -1,76 +1,7 @@
 import { createBoard } from './board.js';
-import { cutEdge, initialEdges } from './rules.js';
-
-const examples = {
-  green: {
-    note: 'In Green, the draw decides who opens.',
-    primary: 'green', left: 'green', right: 'green', secondary: 'green',
-  },
-  redblue: {
-    note: 'The opening draw is independent of the color draw.',
-    primary: 'blue', left: 'red', right: 'blue', secondary: 'red',
-  },
-  mixed: {
-    note: 'Both players can cut green branches in this match.',
-    primary: 'green', left: 'red', right: 'blue', secondary: 'red',
-  },
-};
-
-function makeExample(colors, mode) {
-  const groundY = 142;
-  function edge(id, a, b, part, control) {
-    return { id, a, b, color: colors[id], part, control };
-  }
-  if (mode === 'flower') {
-    return {
-      height: 161, groundY,
-      nodes: [
-        { id: 'ground', x: 449, y: groundY, ground: true },
-        { id: 'base', x: 445, y: 99 }, { id: 'bend', x: 414, y: 69 },
-        { id: 'tip', x: 460, y: 16 },
-      ],
-      edges: [
-        edge('primary', 'base', 'bend', 'petal', { x: 416, y: 93 }),
-        edge('left', 'bend', 'tip', 'petal', { x: 407, y: 40 }),
-        edge('right', 'tip', 'base', 'petal', { x: 491, y: 62 }),
-        edge('secondary', 'ground', 'base', 'stem', { x: 442, y: 122 }),
-      ],
-    };
-  }
-  const nodes = [
-    { id: 'ground-left', x: 398, y: groundY, ground: true },
-    { id: 'fork', x: 450, y: 84 }, { id: 'left-tip', x: 408, y: 26 },
-    { id: 'right-tip', x: 509, y: 39 },
-  ];
-  const edges = [
-    edge('primary', 'ground-left', 'fork', 'support', { x: 420, y: 106 }),
-    edge('left', 'fork', 'left-tip', 'branch', { x: 438, y: 50 }),
-    edge('right', 'fork', 'right-tip', 'branch', { x: 487, y: 68 }),
-  ];
-  if (mode === 'two') {
-    nodes.push({ id: 'ground-right', x: 509, y: groundY, ground: true });
-    edges.push(edge('secondary', 'ground-right', 'fork', 'support', { x: 482, y: 104 }));
-  }
-  return { height: 161, groundY, nodes, edges };
-}
-
-const prompts = {
-  one: 'Will the two upper branches fall if you cut their only support?',
-  two: 'Will the two upper branches fall if you cut the left support?',
-  flower: 'Will the petal tip fall if you cut its lower-left edge?',
-};
-
-function explain(mode, id, move) {
-  if (mode === 'flower') {
-    return move.fallen.length ? 'The whole petal fell. Its stem was its only path to the ground.'
-      : 'The petal opened. Its tip still reaches the stem through the other side.';
-  }
-  if (move.fallen.length) return 'Both upper branches fell. Their only path to the ground was cut.';
-  if (id === 'primary' || id === 'secondary') {
-    return 'Both upper branches stayed. The other support still connects them to the ground.';
-  }
-  return 'Only the cut branch came away. The other branches still have a path to the ground.';
-}
+import { beginLesson, guideVariants, lessonQuestion, takeLessonCut } from './guide-lessons.js';
+import { legalMoves, otherSide } from './rules.js';
+import { chooseMove } from './strategy.js';
 
 const sheet = `
   <div class="hb-guide-sheet">
@@ -94,19 +25,29 @@ const sheet = `
     <p class="hb-guide-clock" data-guide="clock-note">During a match the clock keeps running while this guide is open or the game is in a background tab.</p>
 
     <section class="hb-guide-practice" aria-labelledby="hb-guide-practice-title">
-      <h3 id="hb-guide-practice-title">Which branches fall?</h3>
-      <p>A branch stays if it can reach the ground through branches of any color. Try the marked cut or choose another edge.<span data-guide="practice-side"></span></p>
-      <div class="hb-guide-example">
-        <fieldset class="hb-guide-options">
-          <legend class="hb-guide-sr">Practice position</legend>
-          <label><input type="radio" name="hb-guide-position" value="one" checked><span>One support</span></label>
-          <label><input type="radio" name="hb-guide-position" value="two"><span>Two supports</span></label>
-          <label><input type="radio" name="hb-guide-position" value="flower"><span>Flower loop</span></label>
-        </fieldset>
+      <h3 id="hb-guide-practice-title">Practice cuts</h3>
+      <p>A branch stays if it can reach the ground through branches of any color.</p>
+      <fieldset class="hb-guide-options">
+        <legend class="hb-guide-sr">Choose a practice lesson</legend>
+        <label><input type="radio" name="hb-guide-position" value="one" checked><span>One support</span></label>
+        <label><input type="radio" name="hb-guide-position" value="two"><span>Two supports</span></label>
+        <label><input type="radio" name="hb-guide-position" value="flower"><span>Flower loop</span></label>
+        <label><input type="radio" name="hb-guide-position" value="endgame"><span>Endgame</span></label>
+      </fieldset>
+      <div class="hb-guide-example" data-guide="example">
+        <div class="hb-guide-caption">
+          <p class="hb-guide-turn" data-guide="turn"></p>
+          <button type="button" class="hb-guide-reset" data-guide="reset" hidden>Start over</button>
+        </div>
         <div class="hb-guide-diagram" data-guide="diagram"></div>
         <div class="hb-guide-action-row">
-          <button type="button" class="hb-guide-action" data-guide="action">Cut marked branch</button>
-          <p class="hb-guide-feedback" role="status" aria-live="polite" aria-atomic="true" data-guide="feedback"></p>
+          <div role="status" aria-live="polite" aria-atomic="true">
+            <span class="hb-guide-sr" data-guide="spoken-turn"></span>
+            <p class="hb-guide-feedback" data-guide="feedback" hidden></p>
+            <p class="hb-guide-question" id="hb-guide-question" data-guide="question"></p>
+          </div>
+          <div class="hb-guide-buttons" data-guide="controls" role="group" aria-labelledby="hb-guide-question"></div>
+          <p class="hb-guide-instruction" data-guide="instruction"></p>
         </div>
       </div>
     </section>
@@ -141,45 +82,122 @@ export function createGuide(dialog, { onCut } = {}) {
   dialog.setAttribute('aria-labelledby', 'hb-guide-title');
   const part = key => dialog.querySelector(`[data-guide="${key}"]`);
   const title = dialog.querySelector('#hb-guide-title');
-  const action = part('action');
-  const feedback = part('feedback');
   const diagram = part('diagram');
+  const controls = part('controls');
   const options = dialog.querySelector('.hb-guide-options');
   const oneSupport = options.querySelector('[value="one"]');
   const events = new AbortController();
   const eventOptions = { signal: events.signal };
-  const view = createBoard(diagram, { onCut: cutExample });
-  let colors = examples.green;
-  let board;
-  let live;
-  let mode;
-  let hasCut = false;
+  const view = createBoard(diagram, { onCut: id => playCut(id) });
+  let variant = 'green';
+  let lesson = null;
   let opener = null;
 
   function resetExample() {
-    mode = options.querySelector('input:checked').value;
-    board = makeExample(colors, mode);
-    live = initialEdges(board);
-    hasCut = false;
-    view.update({ board, live, side: 'blue', hintId: 'primary', reset: true });
-    diagram.querySelector('svg').setAttribute('aria-label', 'Practice example. ' + prompts[mode]);
-    action.textContent = 'Cut marked branch';
-    feedback.textContent = prompts[mode];
+    lesson = beginLesson(options.querySelector('input:checked').value, variant);
+    renderLesson({ reset: true });
   }
 
-  function cutExample(id) {
-    if (hasCut || !board) return;
-    const move = cutEdge(board, live, id, 'blue');
-    if (!move) return;
-    hasCut = true;
-    live = move.live;
-    const explanation = explain(mode, id, move);
-    view.update({ board, live, side: 'blue', locked: true, cutId: id, removed: move.fallen });
-    action.textContent = 'Reset example';
-    feedback.textContent = explanation;
-    diagram.querySelector('svg').setAttribute('aria-label', explanation);
-    if (diagram.contains(dialog.ownerDocument.activeElement)) action.focus({ preventScroll: true });
-    onCut?.({ part: board.edges.find(edge => edge.id === id).part, fallen: move.fallen.length });
+  function playCut(id, predictFall = null, computer = false) {
+    if (!dialog.open || !lesson || lesson.finished) return;
+    if (lesson.mode === 'endgame' && (lesson.side === 'red') !== computer) return;
+    const next = takeLessonCut(lesson, id, predictFall);
+    if (!next) return;
+    lesson = next;
+    const { part: branchPart, fallen } = lesson.lastCut;
+    renderLesson({ cutId: id, removed: fallen });
+    onCut?.({ part: branchPart, fallen: fallen.length });
+  }
+
+  function button(label, handler, primary = false) {
+    const element = dialog.ownerDocument.createElement('button');
+    element.type = 'button';
+    element.className = 'hb-guide-action' + (primary ? ' hb-guide-action--primary' : '');
+    element.textContent = label;
+    element.addEventListener('click', handler);
+    controls.append(element);
+  }
+
+  function addActions() {
+    if (lesson.finished) {
+      const lessons = [...options.querySelectorAll('input')];
+      const next = lessons[lessons.findIndex(input => input.checked) + 1];
+      if (next) button('Next · ' + next.labels[0].textContent, () => {
+        next.checked = true;
+        resetExample();
+      }, true);
+      button(lesson.mode === 'endgame' ? 'Play again' : 'Try again', resetExample, !next);
+    } else if (lesson.mode !== 'endgame') {
+      const singular = lesson.mode === 'flower';
+      button(singular ? 'It stays' : 'They stay', () => playCut(lesson.target, false));
+      button(singular ? 'It falls' : 'They fall', () => playCut(lesson.target, true));
+    } else if (lesson.side === 'red') {
+      button('Play the computer’s reply', () => {
+        const { edgeId } = chooseMove(lesson.board, lesson.live, lesson.side);
+        playCut(edgeId, null, true);
+      }, true);
+    } else {
+      for (const id of legalMoves(lesson.board, lesson.live, lesson.side)) {
+        const edge = lesson.board.edges.find(branch => branch.id === id);
+        button('Cut ' + edge.part, () => playCut(id));
+      }
+    }
+  }
+
+  function turnLabel() {
+    const { side, mode, finished, victor, turn } = lesson;
+    const sideName = side === 'blue' ? 'Blue' : 'Red';
+    if (mode !== 'endgame') {
+      if (finished) return turn === 1 ? 'After one cut' : 'After two cuts';
+      const step = turn ? 'Second cut' : 'First cut';
+      return variant === 'green' ? step : step + ' · ' + sideName;
+    }
+    if (victor) return victor === 'blue' ? 'You win' : 'The computer wins';
+    const actor = side === 'blue' ? 'Your turn' : 'Computer’s turn';
+    return variant === 'green' ? actor : actor + ' · ' + sideName;
+  }
+
+  function instructions() {
+    if (lesson.finished || lesson.turn) return '';
+    if (lesson.mode !== 'endgame') return 'Choose a prediction to make the marked cut, or cut a branch in the diagram.';
+    if (variant === 'green') return 'The left stalk has two green branches. The short stalk on the right has one. You play first.';
+    const tipColor = variant === 'mixed' ? 'green' : 'blue';
+    return 'A ' + tipColor + ' tip sits on a red support at left. The short stem at right is blue. You play Blue.';
+  }
+
+  function showText(key, text) {
+    const element = part(key);
+    element.textContent = text;
+    element.hidden = !text;
+  }
+
+  function renderLesson(animation) {
+    const active = dialog.ownerDocument.activeElement;
+    const wasOnControls = controls.contains(active) || active === part('reset');
+    const wasOnBoard = diagram.contains(active);
+    const locked = lesson.finished || (lesson.mode === 'endgame' && lesson.side === 'red');
+    view.update({ board: lesson.board, live: lesson.live, side: lesson.side, locked, hintId: lesson.target, ...animation });
+    const turn = turnLabel();
+    const question = lessonQuestion(lesson);
+    const instruction = instructions();
+    const actor = lesson.finished ? otherSide(lesson.side) : lesson.side;
+    part('spoken-turn').textContent = turn + '. ';
+    part('turn').textContent = turn;
+    part('turn').dataset.color = variant === 'green' ? 'green' : actor;
+    part('reset').hidden = !lesson.turn || lesson.finished;
+    part('example').classList.toggle('hb-guide-predicting', !!lesson.target);
+    showText('feedback', lesson.feedback);
+    showText('question', question);
+    showText('instruction', instruction);
+    const svg = diagram.querySelector('svg');
+    svg.setAttribute('aria-label', (lesson.title + '. ' + turn + '. ' + (question || lesson.feedback) + ' ' + instruction).trim());
+    controls.setAttribute('aria-labelledby', question ? 'hb-guide-question' : 'hb-guide-practice-title');
+    controls.replaceChildren();
+    addActions();
+    if (wasOnControls || (wasOnBoard && locked)) controls.firstElementChild.focus({ preventScroll: true });
+    else if (wasOnBoard && lesson.target) {
+      diagram.querySelector(`[data-edge-id="${lesson.target}"]`).focus({ preventScroll: true });
+    }
   }
 
   function restoreFocus() {
@@ -188,9 +206,9 @@ export function createGuide(dialog, { onCut } = {}) {
     if (target?.isConnected) target.focus({ preventScroll: true });
   }
 
-  function open(variant = 'green', timed = true) {
-    colors = examples[variant] || examples.green;
-    const green = colors === examples.green;
+  function open(rules = 'green', timed = true) {
+    variant = Object.hasOwn(guideVariants, rules) ? rules : 'green';
+    const green = variant === 'green';
     part('turn-rule').textContent = timed
       ? 'You have 10 seconds each turn to cut one eligible branch. At zero, the other player wins.'
       : 'Take turns cutting one eligible branch.';
@@ -200,11 +218,10 @@ export function createGuide(dialog, { onCut } = {}) {
     part('green-rule').hidden = !green;
     for (const side of ['blue', 'red']) {
       part(side + '-rule').hidden = green;
-      part(side + '-branches').textContent = colors === examples.mixed ? side + ' or green' : side;
+      part(side + '-branches').textContent = variant === 'mixed' ? side + ' or green' : side;
     }
-    part('variant-note').textContent = colors.note;
-    part('variant-note').hidden = !timed && colors !== examples.mixed;
-    part('practice-side').textContent = green ? '' : ' You play as Blue in this example.';
+    part('variant-note').textContent = guideVariants[variant].note;
+    part('variant-note').hidden = !timed && variant !== 'mixed';
     if (!dialog.open) {
       opener = dialog.ownerDocument.activeElement;
       dialog.showModal();
@@ -223,7 +240,7 @@ export function createGuide(dialog, { onCut } = {}) {
   }
 
   options.addEventListener('change', resetExample, eventOptions);
-  action.addEventListener('click', () => hasCut ? resetExample() : cutExample('primary'), eventOptions);
+  part('reset').addEventListener('click', resetExample, eventOptions);
   part('close').addEventListener('click', close, eventOptions);
   dialog.addEventListener('cancel', event => { event.preventDefault(); close(); }, eventOptions);
   dialog.addEventListener('close', () => { if (!dialog.open) restoreFocus(); }, eventOptions);

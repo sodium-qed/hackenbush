@@ -1,3 +1,4 @@
+import { normalizeComputerLevel } from './opponents.js';
 import { otherSide } from './rules.js';
 import { cleanName } from './session.js';
 
@@ -26,7 +27,9 @@ export function drawSeats(config = {}, variant = 'green', coin = secureCoin) {
     const computer = !linked && (input?.kind ?? defaultKind) === 'computer';
     const kind = computer ? 'computer' : 'human';
     const fallback = kind === 'computer' ? defaultNickname(index) : 'Guest ' + (index ? 'B' : 'A');
-    return { name: entrantName(input?.name) || fallback, kind };
+    const entrant = { name: entrantName(input?.name) || fallback, kind };
+    if (computer && input?.level !== undefined) entrant.level = normalizeComputerLevel(input.level);
+    return entrant;
   });
 
   const first = Number(coin()) >= 0.5 ? 1 : 0;

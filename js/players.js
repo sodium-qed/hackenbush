@@ -1,7 +1,10 @@
 import { defaultNickname, entrantName } from './draw.js';
+import { COMPUTER_LEVELS, normalizeComputerLevel } from './opponents.js';
 
 let formNumber = 0;
 const letters = ['A', 'B'];
+const levelOptions = Object.entries(COMPUTER_LEVELS)
+  .map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
 
 function icon(symbol) {
   return `<svg class="hb-players__icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#i-${symbol}"></use></svg>`;
@@ -24,6 +27,12 @@ function slotMarkup(prefix, letter) {
             <select id="${id}-kind" name="entrant${letter}Kind">
               <option value="human">Human</option><option value="computer">Computer</option>
             </select>${icon('chevron')}
+          </div>
+        </div>
+        <div class="hb-players__field hb-players__level" id="${id}-level-field" hidden>
+          <label for="${id}-level"><span class="hb-players__sr">Entrant ${letter} </span>Computer difficulty</label>
+          <div class="hb-players__select">
+            <select id="${id}-level" name="entrant${letter}Level" disabled>${levelOptions}</select>${icon('chevron')}
           </div>
         </div>
       </div>
@@ -85,10 +94,15 @@ export function createPlayers(container, { onStart, onChange } = {}) {
   const note = find('draw-note');
   const slots = letters.map(letter => ({
     input: find(`${letter}-name`), kind: find(`${letter}-kind`), label: find(`${letter}-label`),
-    kindField: find(`${letter}-controller-field`), seatIcon: find(`${letter}-seat-icon`), localKind: 'human'
+    kindField: find(`${letter}-controller-field`), seatIcon: find(`${letter}-seat-icon`), localKind: 'human',
+    level: find(`${letter}-level`), levelField: find(`${letter}-level-field`),
   }));
   function pending() {
-    const entrants = slots.map(slot => ({ name: slot.input.value, kind: link.checked ? 'human' : slot.localKind }));
+    const entrants = slots.map(slot => {
+      const entrant = { name: slot.input.value, kind: link.checked ? 'human' : slot.localKind };
+      if (entrant.kind === 'computer') entrant.level = slot.level.value;
+      return entrant;
+    });
     const opponent = link.checked ? 'link' : entrants.some(e => e.kind === 'computer') ? 'computer' : 'local';
     return { entrants, opponent, hostIndex: device.value === '1' ? 1 : 0 };
   }
@@ -115,6 +129,8 @@ export function createPlayers(container, { onStart, onChange } = {}) {
       slot.kind.disabled = link.checked;
       slot.kindField.hidden = link.checked;
       slot.kind.value = kind;
+      slot.levelField.hidden = kind !== 'computer';
+      slot.level.disabled = kind !== 'computer';
       slot.seatIcon.setAttribute('href', kind === 'computer' ? '#i-computer' : '#i-person');
       slot.input.required = kind === 'human';
       slot.label.textContent = kind === 'human' ? 'Name' : 'Nickname';
@@ -135,6 +151,7 @@ export function createPlayers(container, { onStart, onChange } = {}) {
     }
     slot.input.addEventListener('input', event => nameEdited(event.isComposing));
     slot.input.addEventListener('compositionend', () => nameEdited(false));
+    slot.level.addEventListener('change', () => onChange?.(pending()));
     slot.kind.addEventListener('change', () => {
       if (!link.checked) slot.localKind = slot.kind.value;
       refresh();
@@ -155,6 +172,7 @@ export function createPlayers(container, { onStart, onChange } = {}) {
       const fallback = opponent === 'computer' && index === 1 ? 'computer' : 'human';
       slot.localKind = (supplied?.kind ?? fallback) === 'computer' ? 'computer' : 'human';
       slot.input.value = typeof supplied?.name === 'string' ? supplied.name : '';
+      slot.level.value = normalizeComputerLevel(supplied?.level);
       limitDraft(slot.input);
     });
     form.classList.remove('hb-players--submitted');

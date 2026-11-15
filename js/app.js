@@ -1,9 +1,12 @@
 import { createAudio } from './audio.js';
+import { createAnalyzer } from './analyzer.js';
+import { createBuilder } from './builder.js';
+import { CUSTOM_BOARD_VERSION, readCustomBoard } from './custom-board.js';
 import { renderLandscape } from './landscape.js';
 import { createPractice } from './practice.js';
 import { createBoard } from './board.js';
 import { drawSeats } from './draw.js';
-import { CURRENT_BOARD_VERSION, nextMapSeed, normalizeMapSeed } from './map-seed.js';
+import { CURRENT_BOARD_VERSION, nextMapSeed, normalizeMapSeed, usesMapSeed } from './map-seed.js';
 import { createGuide } from './guide.js';
 import { copyText, decodeTurn, encodeTurn } from './linkplay.js';
 import { createPlayers } from './players.js';
@@ -11,7 +14,7 @@ import { timeBoardPreview } from './preview.js';
 import { otherSide } from './rules.js';
 import { TURN_MS, canUndo, createGame, expireTurn, isHumanTurn, matchKey, playCut, receiveLink,
   restoreGame, saveData, startTurnClock, undoTurn } from './session.js';
-import { chooseMove } from './strategy.js';
+import { chooseComputerMove, computerLevelLabel } from './opponents.js';
 
 const $ = id => document.getElementById(id);
 const currentKey = 'groundwork.hackenbush.match.v1';
@@ -25,6 +28,8 @@ const rules = { green: 'Green', redblue: 'Red–Blue', mixed: 'Red–Blue + gree
 const audio = createAudio({ button: $('sound-nav'), dialog: $('sound-dialog') });
 const practiceOptions = { onCut: details => audio.cut(details) };
 const guide = createGuide($('guide-dialog'), practiceOptions);
+const analyzer = createAnalyzer($('analyzer-dialog'));
+const builder = createBuilder($('builder-dialog'), { onUse: applyCustomBoard });
 createPractice($('practice-garden'), practiceOptions);
 const playerForm = createPlayers($('players-view'), { onStart: deal, onChange: saveDraft });
 const boardView = createBoard($('board'), {
@@ -34,7 +39,6 @@ const boardView = createBoard($('board'), {
 let game = null;
 let phase = 'ready';
 let lobby = null;
-let hintId = null;
 let previewUntil = 0;
 let cancelPreview = null;
 let computerTimer = null;
@@ -74,12 +78,14 @@ function setHash(hash) {
 }
 function setSeedQuery(seed = null, boardVersion = CURRENT_BOARD_VERSION) {
   const url = new URL(location.href);
-  if (seed) {
+  url.searchParams.delete('board');
+  if (seed && usesMapSeed(boardVersion)) {
     url.searchParams.set('seed', seed);
     url.searchParams.set('v', String(boardVersion));
   } else {
     url.searchParams.delete('seed');
     url.searchParams.delete('v');
+    if (seed && boardVersion === CUSTOM_BOARD_VERSION) url.searchParams.set('board', seed);
   }
   if (url.href !== location.href) history.replaceState(null, '', url);
 }
@@ -125,7 +131,7 @@ function setPhase(next) {
   const ready = phase === 'ready';
   const playing = phase === 'playing';
   $('variants').hidden = !ready;
-  $('seed-entry').hidden = !ready;
+  $('board-source').hidden = !ready;
   $('garden-title').hidden = ready;
   $('opening-rules').hidden = !ready;
   $('match-players').hidden = ready;
@@ -134,6 +140,7 @@ function setPhase(next) {
   $('board-tools').hidden = !playing;
   $('history-panel').hidden = !playing;
   $('guide-nav').disabled = phase === 'preview';
+  $('analyze-game').hidden = true;
   $('resume').hidden = !ready || !game;
   $('setup-title').textContent = ready ? 'Table rules' : 'Players';
   if (!ready) playerForm.close();
@@ -145,26 +152,29 @@ function updateRules() {
     ? 'Both players can cut any green branch. The draw decides who opens.'
     : 'Red cuts red. Blue cuts blue. Colors and the opening player are drawn at random.';
 }
-function enterLobby({ variant, seed, choices, legacySeed, boardVersion } = {}) {
+function enterLobby({ variant, seed, choices, legacySeed, boardVersion, customCode } = {}) {
   cancelTimers();
+  if ($('analyzer-dialog').open) $('analyzer-dialog').close();
   const previous = lobby || game;
-  const selected = variant ?? previous?.variant;
+  const candidate = customCode ?? (boardVersion === CUSTOM_BOARD_VERSION ? seed : null);
+  const custom = candidate ? readCustomBoard(candidate) : null;
+  const selected = custom?.variant ?? variant ?? previous?.variant;
   lobby = {
     format: CURRENT_BOARD_VERSION,
     boardVersion: boardVersion === 4 ? 4 : CURRENT_BOARD_VERSION,
     variant: selected === 'green' ? 'green' : 'redblue',
     choices: choices ?? lobby?.choices ?? readStorage(entrantsKey)
   };
+  if (custom) lobby.customCode = candidate;
   if (typeof legacySeed === 'string') lobby.legacySeed = legacySeed;
   else if (typeof seed === 'string' && boardVersion === 3) lobby.legacySeed = seed;
-  else if (typeof seed === 'string') lobby.seed = seed;
+  else if (typeof seed === 'string' && boardVersion !== CUSTOM_BOARD_VERSION) lobby.seed = seed;
   $('map-seed').value = lobby.seed || '';
   $('map-seed').setCustomValidity('');
   $('seed-entry').open = !!lobby.seed;
   updateSeedSummary();
   paintedBoard = null;
   previewUntil = 0;
-  hintId = null;
   setZoom(false);
   if (location.hash.startsWith('#turn=')) setHash('');
   setPhase('ready');
@@ -178,7 +188,7 @@ function enterLobby({ variant, seed, choices, legacySeed, boardVersion } = {}) {
   $('share-turn').hidden = true;
   $('clock').hidden = false;
   $('result-mark').hidden = true;
-  $('board-caption').textContent = 'Expert';
+  updateBoardSource(custom);
   updateRules();
   paintClock(TURN_MS);
   playerForm.open({ ...lobby.choices, variant: lobby.variant });
@@ -194,8 +204,36 @@ function saveDraft(choices) {
 function chooseRules(variant) {
   if (!lobby || lobby.variant === variant) return;
   lobby.variant = variant;
+  if (lobby.customCode) {
+    delete lobby.customCode;
+    setSeedQuery(normalizeMapSeed(lobby.seed), lobby.boardVersion);
+    updateBoardSource();
+    feedback('Switched to generated maps for ' + rules[variant] + '.');
+  }
   updateRules();
   playerForm.open({ ...lobby.choices, variant });
+  writeStorage(lobbyKey, lobby, true);
+}
+function updateBoardSource(custom = null) {
+  $('seed-entry').hidden = !!custom;
+  $('custom-selection').hidden = !custom;
+  $('build-board').querySelector('span').textContent = custom ? 'Edit board' : 'Build a board';
+  $('board-caption').textContent = custom ? 'Custom board' : 'Expert';
+  if (custom) {
+    $('custom-name').textContent = custom.board.family;
+    const count = custom.board.edges.length;
+    $('custom-count').textContent = 'Custom board · ' + count + (count === 1 ? ' branch' : ' branches');
+  }
+}
+function applyCustomBoard(code, variant) {
+  const custom = readCustomBoard(code);
+  if (!lobby || !custom || custom.variant !== variant) return;
+  lobby.customCode = code;
+  lobby.variant = variant;
+  updateRules();
+  updateBoardSource(custom);
+  setSeedQuery(code, CUSTOM_BOARD_VERSION);
+  feedback();
   writeStorage(lobbyKey, lobby, true);
 }
 function updateSeedSummary() {
@@ -211,7 +249,7 @@ function drawMap() {
 async function deal(choices) {
   if (phase !== 'ready' || !lobby || dealing) return;
   const input = $('map-seed');
-  const requested = input.value.trim();
+  const requested = lobby.customCode ? '' : input.value.trim();
   const code = normalizeMapSeed(requested);
   if (requested && !code) {
     $('seed-entry').open = true;
@@ -222,18 +260,23 @@ async function deal(choices) {
   }
   const draft = lobby;
   const legacy = !requested && typeof draft.legacySeed === 'string';
+  const customCode = draft.customCode;
+  const variant = draft.variant;
+  const boardVersion = customCode ? CUSTOM_BOARD_VERSION : legacy ? 3 : draft.boardVersion;
   dealing = true;
   try {
-    let seed = legacy ? draft.legacySeed : code;
+    let seed = customCode ?? (legacy ? draft.legacySeed : code);
     if (seed == null) {
       seed = navigator.locks ? await navigator.locks.request(dealKey, drawMap) : drawMap();
     }
-    if (lobby !== draft || phase !== 'ready') return;
-    const seats = drawSeats(choices, draft.variant);
-    const next = createGame({ seed, variant: draft.variant, boardVersion: legacy ? 3 : draft.boardVersion, difficulty: 'expert', ...seats });
+    if (lobby !== draft || phase !== 'ready' || draft.variant !== variant || draft.customCode !== customCode
+        || draft.choices !== choices || (!customCode && input.value.trim() !== requested)) return;
+    const seats = drawSeats(choices, variant);
+    const next = createGame({ seed, variant, boardVersion, ...seats });
     writeStorage(entrantsKey, choices);
     audio.reveal();
     activate(next, { previewEnd: Date.now() + 2000, scroll: true });
+    if (next.victor) audio.end({ timedOut: false });
   } finally {
     dealing = false;
   }
@@ -261,7 +304,8 @@ function seatLabel(side) { return side === game.firstSide ? 'Player 1' : 'Player
 function seatDetails(side) {
   const details = [seatLabel(side)];
   if (game.variant !== 'green') details.push(colors[side]);
-  details.push(game.players[side].kind === 'computer' ? 'Computer' : 'Human');
+  const player = game.players[side];
+  details.push(player.kind === 'computer' ? computerLevelLabel(player.level) + ' computer' : 'Human');
   return details.join(' · ');
 }
 function cutInstruction() {
@@ -374,6 +418,7 @@ function renderMatch(animation = {}) {
   $('turn-action').hidden = !action;
   $('clock').hidden = !game.timed || (waiting && !preview) || won;
   $('result-mark').hidden = !won;
+  $('analyze-game').hidden = !won;
   paintClock(game.timedOut ? 0 : game.deadline === null || preview ? TURN_MS : game.deadline - Date.now());
   $('share-turn').hidden = preview || !linked || (!waiting && !won);
   $('share-turn').querySelector('span').textContent = won ? 'Share result' : invite ? 'Invite Player 1' : 'Share turn link';
@@ -384,26 +429,24 @@ function renderMatch(animation = {}) {
       : 'Make a cut, then send the new turn link to the other player.';
   }
   $('garden-name').textContent = game.board.family || 'Game board';
-  const code = game.boardVersion >= 4 ? game.seed : null;
+  const custom = game.boardVersion === CUSTOM_BOARD_VERSION;
+  const code = usesMapSeed(game.boardVersion) ? game.seed : null;
   paintScenery();
   $('field-branches').textContent = game.live.length + (game.live.length === 1 ? ' branch' : ' branches');
   $('history-count').textContent = String(game.moves.length);
-  $('share-map').hidden = !code;
-  if (code) {
-    $('map-code').textContent = code;
-    $('share-map').setAttribute('aria-label', 'Share map seed ' + code);
-  }
+  $('share-map').hidden = !code && !custom;
+  $('share-map-label').textContent = custom ? 'Share board' : 'Seed';
+  $('map-code').textContent = code || '';
+  $('map-code').hidden = !code;
+  $('share-map').setAttribute('aria-label', custom ? 'Share custom board' : 'Share map seed ' + (code || ''));
   if (!preview) $('board-caption').textContent = rules[game.variant];
-  $('field-label').textContent = won ? 'Final position' : preview ? 'Opening look' : game.boardVersion >= 3 ? 'Expert map' : 'Playing field';
-  $('hint').hidden = !Object.values(game.players).some(player => player.kind === 'computer') || linked || won;
-  $('hint').disabled = !human;
-  $('hint').setAttribute('aria-pressed', String(!!hintId));
+  $('field-label').textContent = won ? 'Final position' : preview ? 'Opening look' : custom ? 'Custom board' : game.boardVersion >= 3 ? 'Expert map' : 'Playing field';
   $('undo').hidden = game.timed || linked || Object.values(game.players).every(player => player.kind === 'computer');
   $('undo').disabled = !canUndo(game);
   showKey();
   renderRoster();
   if ($('history-panel').open) renderHistory();
-  boardView.update({ board: game.board, live: game.live, side: game.side, locked: preview || !human, hintId, ...animation });
+  boardView.update({ board: game.board, live: game.live, side: game.side, locked: preview || !human, ...animation });
 }
 function sameMoves(a, b) { return a.length === b.length && a.every((id, i) => id === b[i]); }
 function newerStoredPosition() {
@@ -450,7 +493,7 @@ function scheduleTurn() {
   const position = game;
   computerTimer = setTimeout(() => {
     if (phase !== 'playing' || game !== position || checkDeadline(Date.now())) return;
-    const move = chooseMove(game.board, game.live, game.side);
+    const move = chooseComputerMove(game.board, game.live, game.side, game.players[game.side].level);
     if (move.edgeId !== null) makeMove(move.edgeId);
   }, 700);
 }
@@ -461,12 +504,14 @@ function makeMove(id) {
   const next = playCut(game, id, now);
   if (!next) return;
   game = startTurnClock(next, now);
-  hintId = null;
   const last = game.rows.at(-1);
   feedback();
   saveMatch();
   renderMatch({ removed: last.fallen, cutId: last.edgeId });
-  audio.cut({ part: game.board.edges[last.branch - 1]?.part, fallen: last.fallen.length });
+  const edge = game.board.edges[last.branch - 1];
+  const a = game.board.nodes.find(node => node.id === edge.a);
+  const b = game.board.nodes.find(node => node.id === edge.b);
+  audio.cut({ part: edge.part, fallen: last.fallen.length, position: (a.x + b.x) / 1800 });
   if (game.victor) audio.end({ timedOut: false });
   announce(seatName(last.side) + ' cut branch ' + last.branch + '. ' + turnMessage());
   scheduleTurn();
@@ -483,7 +528,9 @@ function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
   previewUntil = !game.victor && Number.isSafeInteger(previewEnd) && previewEnd > now ? Math.min(previewEnd, now + 2000) : 0;
   game = startTurnClock(game, previewUntil || now);
   lobby = null;
-  hintId = null;
+  for (const id of ['builder-dialog', 'analyzer-dialog']) {
+    if ($(id).open) $(id).close();
+  }
   if ($('share-dialog').open) $('share-dialog').close();
   if (game.victor && $('guide-dialog').open) $('guide-dialog').close();
   writeStorage(lobbyKey, null, true);
@@ -527,7 +574,15 @@ function loadLocation() {
   game = restoreGame(saved);
   const pending = readStorage(lobbyKey, true);
   const query = new URL(location.href).searchParams;
-  if (query.has('seed')) {
+  if (query.has('board')) {
+    const code = query.get('board');
+    const custom = readCustomBoard(code);
+    enterLobby({ variant: custom?.variant, customCode: custom && code, choices: pending?.choices });
+    if (!custom) {
+      setSeedQuery();
+      feedback('This custom board link is incomplete or invalid. Ask for a fresh board link.');
+    }
+  } else if (query.has('seed')) {
     const requested = query.get('seed');
     const seed = normalizeMapSeed(requested);
     const boardVersion = query.get('v') === '4' ? 4 : CURRENT_BOARD_VERSION;
@@ -541,7 +596,7 @@ function loadLocation() {
     // Unversioned lobby drafts from v3 only carried a seed when rematching.
     if (pending.seed && !pending.format && !pending.legacySeed) enterLobby({ ...pending, boardVersion: 3 });
     else enterLobby(pending);
-  } else if (game?.boardVersion >= 3 && (game.boardVersion === CURRENT_BOARD_VERSION || !game.victor)) {
+  } else if (game?.boardVersion >= 3 && (game.boardVersion >= CURRENT_BOARD_VERSION || !game.victor)) {
     activate(game, { previewEnd: saved.previewUntil });
   } else {
     enterLobby();
@@ -554,6 +609,20 @@ $('resume').addEventListener('click', () => {
 });
 $('variant-green').addEventListener('click', () => chooseRules('green'));
 $('variant-redblue').addEventListener('click', () => chooseRules('redblue'));
+$('build-board').addEventListener('click', () => {
+  if (phase === 'ready') builder.open(lobby.variant, lobby.customCode);
+});
+$('use-map').addEventListener('click', () => {
+  if (!lobby) return;
+  delete lobby.customCode;
+  updateBoardSource();
+  setSeedQuery(normalizeMapSeed(lobby.seed), lobby.boardVersion);
+  writeStorage(lobbyKey, lobby, true);
+  $('seed-entry').querySelector('summary').focus();
+});
+$('analyze-game').addEventListener('click', () => {
+  if (phase === 'playing' && game?.victor) analyzer.open(game);
+});
 $('map-seed').addEventListener('input', () => {
   if (!lobby) return;
   lobby.seed = $('map-seed').value;
@@ -579,16 +648,6 @@ $('scenery-toggle').addEventListener('click', () => {
 });
 $('history-panel').addEventListener('toggle', () => {
   if (phase === 'playing' && $('history-panel').open) renderHistory();
-});
-$('hint').addEventListener('click', () => {
-  if (phase !== 'playing' || !isHumanTurn(game) || checkDeadline(Date.now())) return;
-  if (hintId) { hintId = null; feedback(); renderMatch(); return; }
-  const move = chooseMove(game.board, game.live, game.side);
-  if (move.edgeId === null || checkDeadline(Date.now())) return;
-  hintId = move.edgeId;
-  const index = game.board.edges.findIndex(edge => edge.id === hintId) + 1;
-  feedback(move.proven && move.winning ? 'Branch #' + index + ' wins with perfect play.' : 'Try the highlighted branch, #' + index + '.');
-  renderMatch();
 });
 function openGuide() { guide.open((lobby || game).variant, lobby ? true : game.timed); }
 $('guide-nav').addEventListener('click', openGuide);
@@ -622,6 +681,11 @@ function openShare(url, title, description) {
 $('share-map').addEventListener('click', () => {
   if (!game || game.boardVersion < 4) return;
   const url = gameUrl();
+  if (game.boardVersion === CUSTOM_BOARD_VERSION) {
+    url.searchParams.set('board', game.seed);
+    openShare(url, 'Share this board', game.board.family + ' · ' + rules[game.variant] + '. This link opens the original layout for a new match.');
+    return;
+  }
   url.searchParams.set('seed', game.seed);
   url.searchParams.set('v', String(game.boardVersion));
   openShare(url, 'Share this map', game.board.family + ' · ' + game.seed +

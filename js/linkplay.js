@@ -1,7 +1,8 @@
 import { generateBoard } from './generator.js';
-import { CURRENT_BOARD_VERSION, normalizeMapSeed } from './map-seed.js';
+import { CURRENT_BOARD_VERSION, normalizeMapSeed, usesMapSeed } from './map-seed.js';
+import { CUSTOM_BOARD_VERSION } from './custom-board.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
-import { normalizePlayers, supportsBoard } from './session.js';
+import { boardDifficulty, normalizePlayers, supportsBoard } from './session.js';
 
 const PREFIX = '#turn=';
 const SIDES = ['blue', 'red'];
@@ -91,12 +92,12 @@ function linkPlayers(players, firstSide) {
 }
 
 /** Share the resolved draw, deliberate cuts, and any terminal timeout. An invitation may have zero cuts.
- * Expert boards use ten-second turns. Version 4 and later map codes are six hexadecimal digits.
+ * Seeded and custom boards use ten-second turns. Custom codes carry the board geometry.
  * An active deadline belongs to the receiving device and never goes into the URL.
  * Throws on unsupported settings, an invalid identity, or an illegal/oversized history.
  */
 export function encodeTurn({
-  seed: inputSeed, boardVersion = CURRENT_BOARD_VERSION, variant = 'green', difficulty = boardVersion >= 3 ? 'expert' : 'standard',
+  seed: inputSeed, boardVersion = CURRENT_BOARD_VERSION, variant = 'green', difficulty = boardDifficulty(boardVersion),
   moves, firstSide = 'blue', players, matchId, timed = boardVersion >= 3, timedOut = null, wireVersion,
 }) {
   if (!supportsBoard(boardVersion, variant, difficulty)) {
@@ -115,8 +116,8 @@ export function encodeTurn({
   if (!Array.isArray(moves) || moves.length > MAX_MOVES) {
     throw new RangeError('The move list must contain at most 256 cuts.');
   }
-  const seed = boardVersion >= 4 ? normalizeMapSeed(inputSeed) : inputSeed;
-  if (boardVersion >= 4 && seed === null) throw new RangeError('A map code must contain six hexadecimal digits.');
+  const seed = usesMapSeed(boardVersion) ? normalizeMapSeed(inputSeed) : inputSeed;
+  if (usesMapSeed(boardVersion) && seed === null) throw new RangeError('A map code must contain six hexadecimal digits.');
   const seedToken = encodeText(seed, MAX_SEED_BYTES);
   const seats = linkPlayers(players, firstSide);
   const blue = encodeText(seats.blue.name, MAX_NAME_BYTES);
@@ -154,7 +155,7 @@ function decodeMetadata(fields) {
   const timed = version === '3';
   if ((!timed && version !== '2') || fields.length !== (timed ? 11 : 10) || !SIDES.includes(firstSide)) return null;
   const [versionToken, blueToken, redToken, idToken, timeoutToken] = fields.slice(6);
-  const boardVersions = timed ? ['1', '2', '3', '4', '5'] : ['1', '2'];
+  const boardVersions = timed ? ['1', '2', '3', '4', '5', String(CUSTOM_BOARD_VERSION)] : ['1', '2'];
   if (!boardVersions.includes(versionToken)) return null;
   if (idToken !== '' && !MATCH_ID.test(idToken)) return null;
   const timedOut = timeoutToken || null;
@@ -191,8 +192,8 @@ export function decodeTurn(hash) {
     const metadata = decodeMetadata(fields);
     if (!metadata || !supportsBoard(metadata.boardVersion, variant, difficulty)) return null;
     const storedSeed = decodeText(seedToken, MAX_SEED_BYTES);
-    if (metadata.boardVersion >= 4 && storedSeed?.length !== 6) return null;
-    const seed = metadata.boardVersion >= 4 ? normalizeMapSeed(storedSeed) : storedSeed;
+    if (usesMapSeed(metadata.boardVersion) && storedSeed?.length !== 6) return null;
+    const seed = usesMapSeed(metadata.boardVersion) ? normalizeMapSeed(storedSeed) : storedSeed;
     if (seed === null) return null;
     const board = generateBoard(seed, variant, difficulty, metadata.boardVersion);
     if (indices.length > board.edges.length) return null;
