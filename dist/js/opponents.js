@@ -1,5 +1,5 @@
 import { cutEdge, legalMoves, otherSide } from './rules.js';
-import { chooseMove } from './strategy.js';
+import { chooseMove } from './strategy.js?v=9';
 
 export const COMPUTER_LEVELS = Object.freeze({ easy: 'Easy', standard: 'Standard', expert: 'Expert' });
 
@@ -51,11 +51,14 @@ function tacticalMove(board, live, side, moves) {
 }
 
 /** Choose a cut for this seat. An omitted level retains the original expert strategy. */
-export function chooseComputerMove(board, live, side, level) {
+export function chooseComputerMove(board, live, side, level, options = {}) {
   const strength = normalizeComputerLevel(level);
-  if (strength === 'expert') return chooseMove(board, live, side);
+  if (strength === 'expert') return chooseMove(board, live, side, options);
   const moves = legalMoves(board, live, side);
   if (!moves.length) return result(null, false);
-  if (strength === 'easy') return result(moves[Math.floor(Math.random() * moves.length)]);
+  if (strength === 'easy') {
+    const random = options.random ?? Math.random;
+    return result(moves[Math.floor(random() * moves.length)]);
+  }
   return tacticalMove(board, live, side, moves);
 }

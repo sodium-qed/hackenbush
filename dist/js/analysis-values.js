@@ -1,5 +1,10 @@
-import { chooseMove, inspectGraph, prepareGraph } from './strategy.js?v=8';
+import { inspectGraph, prepareGraph } from './strategy.js?v=9';
 import { otherSide } from './rules.js';
+import { fixed, fraction, intersect, numberOption, onlyLatticePoint, simplest, sumOf, supported } from './analysis-dyadics.js';
+import { oppositeGraphs } from './analysis-symmetry.js';
+import { compressHangingTrees } from './analysis-reductions.js';
+
+export { dyadicChange } from './analysis-dyadics.js';
 
 function count(mask) {
   let size = 0;
@@ -7,269 +12,519 @@ function count(mask) {
   return size;
 }
 
-function fraction(value, denominator) {
-  if (!value) return '0';
-  while (denominator > 1n && !(value & 1n)) {
-    value /= 2n;
-    denominator /= 2n;
+function boundedTable(limit, counters) {
+  const entries = new Map();
+  return {
+    get(key) {
+      const value = entries.get(key);
+      if (value !== undefined) {
+        counters.cacheHits++;
+        entries.delete(key);
+        entries.set(key, value);
+      }
+      return value;
+    },
+    set(key, value) {
+      entries.delete(key);
+      if (entries.size >= limit) entries.delete(entries.keys().next().value);
+      entries.set(key, value);
+      return value;
+    },
+  };
+}
+
+function singleBit(mask) {
+  return mask && !(mask & (mask - 1n)) ? mask : 0n;
+}
+
+function isExact(bounds) { return bounds.lo === bounds.hi; }
+
+// Return true/false only when every number in the interval answers alike.
+function knownOrder(bounds, q, atLeast) {
+  if (atLeast) {
+    if (bounds.lo >= q) return true;
+    if (bounds.hi < q || (bounds.hi === q && bounds.hiOpen)) return false;
+  } else {
+    if (bounds.hi <= q) return true;
+    if (bounds.lo > q || (bounds.lo === q && bounds.loOpen)) return false;
   }
-  return denominator === 1n ? String(value) : value + '/' + denominator;
+  return null;
 }
 
-function sign(value) {
-  return value === 0n ? 0 : value > 0n ? 1 : -1;
-}
-
-export function dyadicChange(before, after) {
-  const [a, b = 1n] = before.split('/').map(BigInt);
-  const [c, d = 1n] = after.split('/').map(BigInt);
-  const common = b > d ? b : d;
-  const difference = c * (common / d) - a * (common / b);
-  return (difference > 0n ? '+' : '') + fraction(difference, common);
-}
-
-// The birthday of any position is at most the number of live edges. Scaling
-// every value by 2^E therefore represents every option in this search exactly,
-// including tiny fractions added to large integers on a different component.
-function numericAnalysis(graph, opening, exactDeadline) {
+function numericSolver(graph, mask, shapeFor, cuts, maxEntries, counters) {
   const unit = 1n << BigInt(graph.edges.length);
   const stride = BigInt(graph.incident.length);
-  const keyFor = (mask, root) => mask * stride + BigInt(root);
-  const shapes = new Map([[keyFor(opening.mask, 0), opening]]);
-  const values = new Map();
-  const structuralMisses = new Set();
-  const { blue, red } = graph.colors;
+  const { red, blue } = graph.colors;
+  const values = boundedTable(maxEntries, counters);
+  const cancellations = boundedTable(Math.max(4, Math.floor(maxEntries / 16)), counters);
+  const keyFor = (m, root) => m * stride + BigInt(root);
+  const edgeFor = bit => graph.edges[graph.bitIndex.get(bit)];
+  const neighbor = (edge, root) => edge.a === root ? edge.b : edge.a;
+  // Pin the public certificate independently of cache eviction.
+  let openingBounds;
 
-  function shapeFor(mask, root) {
-    const key = keyFor(mask, root);
-    if (shapes.has(key)) return shapes.get(key);
-    const shape = inspectGraph(graph, mask, root);
-    if (shapes.size < 1000) shapes.set(key, shape);
-    return shape;
-  }
-
-  // A Blue edge under a number makes the ordinal sum 1:x. A Red edge
-  // reflects both the argument and the result through zero.
-  function supported(color, value) {
-    if (color === 'red') return -supported('blue', -value);
-    if (value >= 0n) return unit + value;
-    return (2n * unit + value % unit) >> (1n - value / unit);
-  }
-
-  function simplest(left, right) {
-    if ((left === null || left < 0n) && (right === null || right > 0n)) return 0n;
-    if (right !== null && right <= 0n) return -simplest(-right, left === null ? null : -left);
-    for (let step = unit; step; step >>= 1n) {
-      const candidate = (left / step + 1n) * step;
-      if (right === null || candidate < right) return candidate;
-    }
-    throw new RangeError('Red–Blue options exceed the position’s dyadic resolution.');
-  }
-
-  function edgeFor(bit) { return graph.edges[graph.bitIndex.get(bit)]; }
-  function neighbor(edge, vertex) { return edge.a === vertex ? edge.b : edge.a; }
-
-  function treeValue(mask, root, parent = 0n) {
+  function treeValue(m, root, parent = 0n) {
     let sum = 0n;
-    for (let bits = graph.incident[root] & mask & ~parent; bits; bits &= bits - 1n) {
+    for (let bits = graph.incident[root] & m & ~parent; bits; bits &= bits - 1n) {
       const bit = bits & -bits;
       const edge = edgeFor(bit);
       const next = neighbor(edge, root);
-      const above = next === root ? 0n : treeValue(mask, next, bit);
-      sum += supported(edge.color, above);
+      const above = next === root ? 0n : treeValue(m, next, bit);
+      sum += supported(edge.color, fixed(above), unit).lo;
     }
     return sum;
   }
 
-  function singleSupport(mask, root) {
-    const attached = mask & graph.incident[root];
-    return attached && !(attached & (attached - 1n)) ? attached : 0n;
+  function store(m, root, bounds) {
+    if (m === mask && !root) openingBounds = bounds;
+    return values.set(keyFor(m, root), bounds);
   }
 
-  function exact(mask, root, search) {
-    if (!mask) return 0n;
-    const key = keyFor(mask, root);
-    if (values.has(key)) return values.get(key);
-    if (!search && structuralMisses.has(key)) return null;
+  // Count edges still connected to the base after deleting the other color.
+  function secureCount(own, root) {
+    let reached = 0n, frontier = own & graph.incident[root], total = 0;
+    while (frontier) {
+      const bit = frontier & -frontier;
+      reached |= bit;
+      const edge = edgeFor(bit);
+      frontier = (frontier | ((graph.incident[edge.a] | graph.incident[edge.b]) & own)) & ~reached;
+      total++;
+    }
+    return total;
+  }
 
-    let value = null;
-    if (!(mask & red) || !(mask & blue) || !(mask & ~graph.incident[root])) {
-      value = BigInt(count(mask & blue) - count(mask & red)) * unit;
+  function materialBounds(m, root, b, r) {
+    const safeBlue = secureCount(m & blue, root);
+    const safeRed = secureCount(m & red, root);
+    // Cutting only Blue until none remains leaves exactly -safeRed; exchange
+    // colors for the upper endpoint. Both sequences are nonempty here.
+    const cutAll = { lo: -BigInt(safeRed) * unit, hi: BigInt(safeBlue) * unit, loOpen: true, hiOpen: true };
+    // Blue can spend each secured edge without losing another secured edge
+    // (cycle edges first, then tree leaves), while Red has at most r moves.
+    // Add integer waiting moves to compare with safeBlue - r. Reflect for Red.
+    return intersect(cutAll, { lo: BigInt(safeBlue - r) * unit, hi: BigInt(b - safeRed) * unit,
+      loOpen: false, hiOpen: false });
+  }
+
+  // Each structural fact is eager and independent of the search budget. A
+  // zero-budget reader always gets exact trees or a valid opening enclosure.
+  function boundsFor(m, root) {
+    if (!m) return fixed(0n);
+    if (m === mask && !root && openingBounds) return openingBounds;
+    const cached = values.get(keyFor(m, root));
+    if (cached) return cached;
+    const b = count(m & blue), r = count(m & red);
+    let bounds;
+    if (!r || !b || !(m & ~graph.incident[root])) {
+      bounds = fixed(BigInt(b - r) * unit);
     } else {
-      const shape = shapeFor(mask, root);
-      if (!shape.cyclic) {
-        value = treeValue(mask, root);
-      } else if (shape.parts.length > 1) {
-        value = 0n;
-        for (const part of shape.parts) {
-          const summand = exact(part.mask, root, search);
-          if (summand === null) { value = null; break; }
-          value += summand;
-        }
+      const shape = shapeFor(m, root);
+      if (!shape.cyclic) bounds = fixed(treeValue(m, root));
+      else if (shape.parts.length > 1) {
+        bounds = shape.parts.reduce((total, part) => sumOf(total, boundsFor(part.mask, root)), fixed(0n));
       } else {
-        const stem = singleSupport(mask, root);
+        const stem = singleBit(m & graph.incident[root]);
         if (stem) {
           const edge = edgeFor(stem);
-          const above = exact(mask & ~stem, neighbor(edge, root), search);
-          if (above !== null) value = supported(edge.color, above);
-        } else if (search && (shape.cycleRank <= 2 || count(mask) <= 20) && performance.now() < exactDeadline) {
-          let left = null, right = null, complete = true;
-          for (let cuts = mask; cuts; cuts &= cuts - 1n) {
-            if (performance.now() >= exactDeadline) { complete = false; break; }
-            const bit = cuts & -cuts;
-            const child = exact(mask & ~shape.drops[graph.bitIndex.get(bit)], root, true);
-            if (child === null) { complete = false; break; }
-            if (bit & blue) {
-              if (left === null || child > left) left = child;
-            } else if (right === null || child < right) right = child;
-          }
-          if (complete) value = simplest(left, right);
+          bounds = supported(edge.color, boundsFor(m & ~stem, neighbor(edge, root)), unit);
+        } else {
+          bounds = materialBounds(m, root, b, r);
         }
       }
     }
-    if (value !== null) values.set(key, value);
-    else if (!search) structuralMisses.add(key);
+    return store(m, root, bounds);
+  }
+
+  function publish(m, root, bounds) {
+    const tighter = intersect(boundsFor(m, root), bounds);
+    return store(m, root, onlyLatticePoint(tighter, count(m), unit));
+  }
+
+  function endpoint(m, root, lower, q, open) {
+    const previous = boundsFor(m, root);
+    const warranted = lower ? { ...previous, lo: q, loOpen: open } : { ...previous, hi: q, hiOpen: open };
+    return publish(m, root, warranted);
+  }
+
+  // Propagate stronger child facts even when the search of a sibling paused.
+  function refresh(m, root) {
+    const previous = boundsFor(m, root);
+    if (isExact(previous)) return previous;
+    const residual = cancellations.get(keyFor(m, root));
+    if (residual !== undefined) return publish(m, root, refresh(residual, root));
+    const shape = shapeFor(m, root);
+    if (shape.parts.length > 1) {
+      const sum = shape.parts.reduce((total, part) => sumOf(total, refresh(part.mask, root)), fixed(0n));
+      return publish(m, root, sum);
+    }
+    const stem = singleBit(m & graph.incident[root]);
+    if (stem) {
+      const edge = edgeFor(stem);
+      return publish(m, root, supported(edge.color, refresh(m & ~stem, neighbor(edge, root)), unit));
+    }
+    return previous;
+  }
+
+  // Ignore shape drawings and vertex labels. A match must verify a rooted,
+  // color-reversed multigraph bijection before claiming V + (-V) = 0.
+  function* symmetry(m, root) {
+    if (isExact(boundsFor(m, root))) return;
+    yield;
+    const shape = shapeFor(m, root);
+    if (shape.parts.length > 1) {
+      let residual = m;
+      const unknown = shape.parts.filter(part => !isExact(boundsFor(part.mask, root)));
+      for (let i = 0; i < unknown.length; i++) {
+        const a = unknown[i].mask;
+        if (!(residual & a)) continue;
+        for (let j = i + 1; j < unknown.length; j++) {
+          const b = unknown[j].mask;
+          if (!(residual & b) || count(a & blue) !== count(b & red) || count(a & red) !== count(b & blue)) continue;
+          if (yield* oppositeGraphs(graph, a, b, root)) {
+            residual &= ~(a | b);
+            cancellations.set(keyFor(m, root), residual);
+            publish(m, root, boundsFor(residual, root));
+            break;
+          }
+        }
+      }
+      for (const { mask: part } of unknown) if (part & residual) yield* symmetry(part, root);
+    } else {
+      const stem = singleBit(m & graph.incident[root]);
+      if (stem) {
+        yield* symmetry(m & ~stem, neighbor(edgeFor(stem), root));
+      } else if (count(m & blue) === count(m & red) && (yield* oppositeGraphs(graph, m, m, root))) {
+        publish(m, root, fixed(0n));
+      }
+    }
+    refresh(m, root);
+  }
+
+  // Every actual Blue move is strictly downward in a number, and every Red
+  // move strictly upward. Even a nonalternating path gives a valid endpoint.
+  function* cutWitness(side, cycleFirst = false) {
+    const lower = side === 'blue';
+    let current = mask;
+    while (current && !isExact(boundsFor(current, 0)) && !isExact(openingBounds)) {
+      yield;
+      const shape = shapeFor(current, 0);
+      let unknown = 0n;
+      for (const part of shape.parts) {
+        if (!isExact(boundsFor(part.mask, 0))) unknown |= part.mask;
+      }
+      const available = unknown & graph.colors[side];
+      if (!available) break;
+      const cyclic = available & shape.cyclic;
+      if (cycleFirst && cyclic) current &= ~(cyclic & -cyclic);
+      else current = cuts(current, 0, available, side)[0].next;
+      const child = boundsFor(current, 0);
+      endpoint(mask, 0, lower, lower ? child.lo : child.hi, true);
+    }
+  }
+
+  // Simplicity is monotone in both option extrema on its valid domain:
+  // if two shifted intervals gave oppositely ordered simplest numbers, both
+  // numbers would lie inside both intervals, contradicting uniqueness.
+  function* optionEnvelope(m, root, depth) {
+    if (isExact(boundsFor(m, root))) return;
+    yield;
+    const shape = shapeFor(m, root);
+    if (shape.parts.length > 1) {
+      for (const part of shape.parts) {
+        yield* optionEnvelope(part.mask, root, depth);
+        refresh(m, root);
+      }
+      return;
+    }
+    const stem = singleBit(m & graph.incident[root]);
+    if (stem) {
+      yield* optionEnvelope(m & ~stem, neighbor(edgeFor(stem), root), depth);
+      refresh(m, root);
+      return;
+    }
+    let leftLo = null, leftHi = null, rightLo = null, rightHi = null;
+    for (const { next, side } of cuts(m, root, m)) {
+      if (isExact(boundsFor(m, root))) return;
+      yield;
+      if (depth > 1) yield* optionEnvelope(next, root, depth - 1);
+      const b = boundsFor(next, root);
+      if (side === 'blue') {
+        if (leftLo === null || b.lo > leftLo) leftLo = b.lo;
+        if (leftHi === null || b.hi > leftHi) leftHi = b.hi;
+        endpoint(m, root, true, b.lo, true);
+      } else {
+        if (rightLo === null || b.lo < rightLo) rightLo = b.lo;
+        if (rightHi === null || b.hi < rightHi) rightHi = b.hi;
+        endpoint(m, root, false, b.hi, true);
+      }
+    }
+    // Endpoint approximants may overlap, or be consecutive on the working
+    // grid. Use simplicity only when a representable interior point exists.
+    if (leftLo === null || rightLo === null || leftLo + 1n < rightLo) {
+      endpoint(m, root, true, simplest(leftLo, rightLo, unit), false);
+    }
+    if (leftHi === null || rightHi === null || leftHi + 1n < rightHi) {
+      endpoint(m, root, false, simplest(leftHi, rightHi, unit), false);
+    }
+  }
+
+  function* lookahead() {
+    for (const depth of [1, 2, 3]) yield* optionEnvelope(mask, 0, depth);
+  }
+
+  // Conway comparison. G >= q iff no Red option is <= q and no canonical
+  // Left option of q is >= G. The reversed test exchanges both colors/roles.
+  // Failure of a weak comparison is a *strict* opposite inequality for numbers.
+  function* compare(m, root, q, atLeast) {
+    let bounds = boundsFor(m, root);
+    let known = knownOrder(bounds, q, atLeast);
+    if (known !== null) return known;
+    yield;
+    const residual = cancellations.get(keyFor(m, root));
+    const shape = shapeFor(m, root);
+    let answer;
+    if (residual !== undefined) {
+      answer = yield* compare(residual, root, q, atLeast);
+    } else if (shape.parts.length > 1) {
+      let offset = 0n, unknown = 0n;
+      for (const part of shape.parts) {
+        bounds = boundsFor(part.mask, root);
+        if (isExact(bounds)) offset += bounds.lo;
+        else unknown |= part.mask;
+      }
+      if (unknown !== m) answer = yield* compare(unknown, root, q - offset, atLeast);
+    }
+    if (answer === undefined) {
+      const qOption = numberOption(q, atLeast, unit);
+      answer = qOption === null || !(yield* compare(m, root, qOption, !atLeast));
+      if (answer) {
+        const side = atLeast ? 'red' : 'blue';
+        for (const { next } of cuts(m, root, m & graph.colors[side], side)) {
+          known = knownOrder(boundsFor(m, root), q, atLeast);
+          if (known !== null) return known;
+          yield;
+          if (yield* compare(next, root, q, !atLeast)) { answer = false; break; }
+        }
+      }
+    }
+    endpoint(m, root, answer === atLeast, q, !answer);
+    return answer;
+  }
+
+  function* thresholdSearch(zeroWinner) {
+    const atLeast = zeroWinner === 'blue';
+    while (!isExact(openingBounds)) {
+      const b = refresh(mask, 0);
+      if (isExact(b)) return;
+      // Include a closed endpoint when picking the oldest admissible dyadic.
+      const q = simplest(b.lo - (b.loOpen ? 0n : 1n), b.hi + (b.hiOpen ? 0n : 1n), unit);
+      if (yield* compare(mask, 0, q, atLeast)) yield* compare(mask, 0, q, !atLeast);
+    }
+  }
+
+  // A second route to the full value. At a knot it needs only extrema. An
+  // option proved dominated by an already priced option can be skipped.
+  function* exactValue(m, root) {
+    let bounds = boundsFor(m, root);
+    if (isExact(bounds)) return bounds.lo;
+    yield;
+    const residual = cancellations.get(keyFor(m, root));
+    const shape = shapeFor(m, root);
+    let value;
+    if (residual !== undefined) value = yield* exactValue(residual, root);
+    else if (shape.parts.length > 1) {
+      value = 0n;
+      for (const part of shape.parts) {
+        value += yield* exactValue(part.mask, root);
+        refresh(m, root);
+      }
+    } else {
+      const stem = singleBit(m & graph.incident[root]);
+      if (stem) {
+        const edge = edgeFor(stem);
+        const above = yield* exactValue(m & ~stem, neighbor(edge, root));
+        value = supported(edge.color, fixed(above), unit).lo;
+      } else {
+        let left = null, right = null;
+        for (const { next, side } of cuts(m, root, m)) {
+          bounds = boundsFor(m, root);
+          if (isExact(bounds)) return bounds.lo;
+          yield;
+          const child = boundsFor(next, root);
+          const isBlue = side === 'blue';
+          if (isBlue ? left !== null && child.hi <= left : right !== null && child.lo >= right) continue;
+          // In a number all Left options lie strictly below every Right option.
+          endpoint(m, root, isBlue, isBlue ? child.lo : child.hi, true);
+          const option = yield* exactValue(next, root);
+          if (isBlue && (left === null || option > left)) left = option;
+          if (!isBlue && (right === null || option < right)) right = option;
+          endpoint(m, root, isBlue, option, true);
+        }
+        value = simplest(left, right, unit);
+      }
+    }
+    publish(m, root, fixed(value));
     return value;
   }
 
-  function fixed(value) {
-    return { lo: value, hi: value, loOpen: false, hiOpen: false };
-  }
-
-  function add(total, part) {
-    total.lo += part.lo;
-    total.hi += part.hi;
-    total.loOpen ||= part.loOpen;
-    total.hiOpen ||= part.hiOpen;
-  }
-
-  function structuralBounds(mask, root) {
-    const known = exact(mask, root, false);
-    if (known !== null) return fixed(known);
-    const shape = shapeFor(mask, root);
-    if (shape.parts.length > 1) {
-      const total = fixed(0n);
-      for (const part of shape.parts) add(total, structuralBounds(part.mask, root));
-      return total;
-    }
-    const stem = singleSupport(mask, root);
-    if (stem) {
-      const edge = edgeFor(stem);
-      const above = structuralBounds(mask & ~stem, neighbor(edge, root));
-      return { ...above, lo: supported(edge.color, above.lo), hi: supported(edge.color, above.hi) };
-    }
-    // At least one Blue cut lowers the number strictly; cutting Blue until
-    // none remain leaves at most the original number of Red branches. The
-    // upper bound follows by exchanging colors.
-    return { lo: -BigInt(count(mask & red)) * unit, hi: BigInt(count(mask & blue)) * unit,
-      loOpen: true, hiOpen: true };
-  }
-
-  function certify(mask, color, bounds, deadline) {
-    const lower = color === 'blue';
-    const own = graph.colors[color];
-    const opposing = graph.colors[otherSide(color)];
-    let current = mask;
-    while (current && performance.now() < deadline) {
-      const shape = shapeFor(current, 0);
-      let unresolved = 0n;
-      for (const part of shape.parts) {
-        if (exact(part.mask, 0, false) === null) unresolved |= part.mask;
-      }
-      const available = unresolved & own;
-      if (!available) break;
-
-      // A cycle cut keeps every other branch standing. When only bridges of
-      // this color remain, prefer one that sheds the most opposing branches.
-      const cyclic = shape.cyclic & available;
-      let drop = 0n;
-      if (cyclic) drop = cyclic & -cyclic;
-      else {
-        let best = -Infinity;
-        for (let cuts = available; cuts; cuts &= cuts - 1n) {
-          const removed = shape.drops[graph.bitIndex.get(cuts & -cuts)];
-          const score = count(removed & opposing) - count(removed & own);
-          if (score > best) { best = score; drop = removed; }
-        }
-      }
-      current &= ~drop;
-      const next = structuralBounds(current, 0);
-      // Every actual move in this sequence was by the same color. Its final
-      // lower/upper endpoint is therefore a strict bound on the original.
-      if (lower && next.lo >= bounds.lo) { bounds.lo = next.lo; bounds.loOpen = true; }
-      if (!lower && next.hi <= bounds.hi) { bounds.hi = next.hi; bounds.hiOpen = true; }
-    }
-  }
-
-  function evaluate(mask, deadline) {
-    const known = exact(mask, 0, true);
-    if (known !== null) return { number: fraction(known, unit), sign: sign(known) };
-    // Some independent pieces may follow an unresolved component in the DFS.
-    // Price those too, even when the whole sum could not be evaluated.
-    const parts = shapeFor(mask, 0).parts;
-    if (parts.length > 1) for (const part of parts) exact(part.mask, 0, true);
-    const bounds = structuralBounds(mask, 0);
-    if (bounds.lo === bounds.hi) return { number: fraction(bounds.lo, unit), sign: sign(bounds.lo) };
-    const now = performance.now();
-    certify(mask, 'blue', bounds, now + Math.max(0, deadline - now) / 2);
-    certify(mask, 'red', bounds, deadline);
-    return { lower: fraction(bounds.lo, unit), upper: fraction(bounds.hi, unit),
-      lowerOpen: bounds.loOpen, upperOpen: bounds.hiOpen,
-      lowerSign: sign(bounds.lo), upperSign: sign(bounds.hi) };
-  }
-
-  return evaluate;
+  openingBounds = boundsFor(mask, 0);
+  return {
+    done: () => isExact(openingBounds),
+    tasks(zeroWinner) {
+      return [cutWitness('blue', true), cutWitness('red', true), symmetry(mask, 0), thresholdSearch(zeroWinner),
+        compare(mask, 0, 0n, zeroWinner !== 'blue'), exactValue(mask, 0), lookahead(),
+        cutWitness('blue'), cutWitness('red')];
+    },
+    result(kind, nimber, zeroWinner) {
+      const b = refresh(mask, 0);
+      if (isExact(b)) return { kind, exact: true, number: fraction(b.lo, unit), nimber,
+        winner: b.lo > 0n ? 'blue' : b.lo < 0n ? 'red' : zeroWinner };
+      let winner = null;
+      if (b.lo > 0n || (b.lo === 0n && (b.loOpen || zeroWinner === 'blue'))) winner = 'blue';
+      if (b.hi < 0n || (b.hi === 0n && (b.hiOpen || zeroWinner === 'red'))) winner = 'red';
+      return { kind, exact: false, nimber, lower: fraction(b.lo, unit), upper: fraction(b.hi, unit),
+        lowerOpen: b.loOpen, upperOpen: b.hiOpen, winner };
+    },
+  };
 }
 
-/** Analyze the standing position under untimed normal play. A winner is either
- * certified by graph arithmetic / search or explicitly null. */
-export function analyzePosition(board, live, side, variant = 'redblue', { budgetMs = 220 } = {}) {
-  const start = performance.now();
-  const budget = Number.isFinite(budgetMs) ? Math.max(0, budgetMs) : 220;
+function cap(value, fallback, maximum) {
+  return Number.isFinite(value) ? Math.min(maximum, Math.max(0, Math.floor(value))) : fallback;
+}
+
+function proofGraph(board, live, retained, counters) {
   const graph = prepareGraph(board, live);
   const mask = (1n << BigInt(graph.edges.length)) - 1n;
   const opening = inspectGraph(graph, mask);
+  const stride = BigInt(graph.incident.length);
+  const shapeCapacity = Math.max(2, Math.min(256, Math.floor(retained / 4),
+    Math.floor(24000 / Math.max(1, graph.edges.length))));
+  const shapes = boundedTable(shapeCapacity, counters);
+
+  function shapeFor(m, root) {
+    if (m === mask && !root) return opening;
+    const key = m * stride + BigInt(root);
+    return shapes.get(key) || shapes.set(key, inspectGraph(graph, m, root));
+  }
+
+  function cuts(m, root, available, player) {
+    const shape = shapeFor(m, root);
+    const families = graph.hasParallel ? new Set() : null;
+    const moves = [];
+    for (let bits = available; bits; bits &= bits - 1n) {
+      const bit = bits & -bits;
+      const index = graph.bitIndex.get(bit);
+      const edge = graph.edges[index];
+      if (families?.has(edge.family)) continue;
+      families?.add(edge.family);
+      const mover = player || edge.color;
+      const removed = shape.drops[index];
+      const gain = count(removed & graph.colors[otherSide(mover)]) - count(removed & graph.colors[mover]);
+      moves.push({ next: m & ~removed, side: mover, score: 4 * gain + (bit & shape.cyclic ? 1 : 0) });
+    }
+    return moves.sort((a, b) => b.score - a.score);
+  }
+
+  return { graph, mask, opening, shapeFor, cuts };
+}
+
+/** A resumable proof for one immutable board, standing position and mover.
+ * The mandatory structural pass is always available. Slices share exact
+ * certificates, bounded transposition tables and suspended search frontiers. */
+export function createAnalysisSession(board, live, side, variant = 'redblue', { maxEntries = 4096 } = {}) {
+  const started = performance.now();
+  const counters = { nodes: 0, cacheHits: 0 };
+  const retained = Math.max(16, cap(maxEntries, 4096, 16384));
+  const position = proofGraph(board, live, retained, counters);
+  const { graph, opening, cuts, mask } = position;
+  let searchEdges = graph.edges.length;
   const { green } = graph.colors;
   const greenOnly = mask ? green === mask : variant === 'green';
   const kind = greenOnly ? 'green' : green ? 'mixed' : 'redblue';
-  if (greenOnly) return { kind, exact: true, nimber: opening.nim, winner: opening.nim ? side : otherSide(side) };
-
-  let nimber = 0, numeric = 0n, interwoven = false;
-  for (const part of opening.parts) {
-    const shared = part.mask & green;
-    if (!shared) numeric |= part.mask;
-    else if (shared === part.mask) nimber ^= part.nim;
-    else if (!(part.mask & ~graph.incident[0])) {
-      nimber ^= count(shared) % 2;
-      numeric |= part.mask & ~green;
-    } else interwoven = true;
-  }
-
-  let result = { kind, exact: false, winner: null };
-  if (!interwoven) {
-    const evaluate = numericAnalysis(graph, opening, start + budget * .52);
-    const value = evaluate(numeric, start + budget * .82);
-    const zeroWinner = nimber ? side : otherSide(side);
-    if (value.number !== undefined) {
-      return { kind, exact: true, number: value.number, nimber,
-        winner: value.sign ? (value.sign > 0 ? 'blue' : 'red') : zeroWinner };
+  let completed, numeric, nimber = 0, zeroWinner;
+  const tasks = [];
+  if (greenOnly) completed = { kind, exact: true, nimber: opening.nim, winner: opening.nim ? side : otherSide(side) };
+  else {
+    let colored = 0n, interwoven = false;
+    for (const part of opening.parts) {
+      const shared = part.mask & green;
+      if (!shared) colored |= part.mask;
+      else if (shared === part.mask) nimber ^= part.nim;
+      else if (!(part.mask & ~graph.incident[0])) {
+        nimber ^= count(shared) % 2;
+        colored |= part.mask & ~green;
+      } else interwoven = true;
     }
-    result = { ...result, nimber, lower: value.lower, upper: value.upper,
-      lowerOpen: value.lowerOpen, upperOpen: value.upperOpen };
-    if (value.lowerSign > 0 || (value.lowerSign === 0 && (value.lowerOpen || zeroWinner === 'blue'))) result.winner = 'blue';
-    if (value.upperSign < 0 || (value.upperSign === 0 && (value.upperOpen || zeroWinner === 'red'))) result.winner = 'red';
-  }
 
-  if (!result.winner) {
-    if (!(graph.allowed[side] & mask)) result.winner = otherSide(side);
-    else if (!(graph.allowed[otherSide(side)] & mask)) result.winner = side;
-    else {
-      const remaining = start + budget - performance.now();
-      if (remaining > 0) {
-        const proof = chooseMove(board, live, side, { budgetMs: remaining });
-        if (proof.proven) result.winner = proof.winning ? side : otherSide(side);
+    if (interwoven) {
+      const outcomes = boundedTable(retained, counters);
+      function* wins(m, mover) {
+        if (!(m & graph.allowed[mover])) return false;
+        const opponent = otherSide(mover);
+        if (!(m & graph.allowed[opponent])) return true;
+        const key = m * 2n + BigInt(mover === 'red');
+        const cached = outcomes.get(key);
+        if (cached !== undefined) return cached;
+        yield;
+        for (const { next } of cuts(m, 0, m & graph.allowed[mover], mover)) {
+          yield;
+          if (!(yield* wins(next, opponent))) return outcomes.set(key, true);
+        }
+        return outcomes.set(key, false);
       }
+      const immediate = !(mask & graph.allowed[side]) ? otherSide(side)
+        : !(mask & graph.allowed[otherSide(side)]) ? side : null;
+      if (immediate) completed = { kind, exact: false, winner: immediate };
+      else tasks.push((function* () {
+        const winning = yield* wins(mask, side);
+        completed = { kind, exact: false, winner: winning ? side : otherSide(side) };
+      })());
+    } else {
+      zeroWinner = nimber ? side : otherSide(side);
+      let prepared = position;
+      const compact = opening.cyclic && compressHangingTrees(graph, colored);
+      if (compact) {
+        prepared = proofGraph(compact, compact.edges.map(edge => edge.id), retained, counters);
+        colored = prepared.mask;
+      }
+      searchEdges = count(colored);
+      numeric = numericSolver(prepared.graph, colored, prepared.shapeFor, prepared.cuts, retained, counters);
+      if (!numeric.done()) tasks.push(...numeric.tasks(zeroWinner));
     }
   }
-  return result;
+
+  let durationMs = performance.now() - started;
+  let first = true;
+  return {
+    refine({ budgetMs = 220, nodeLimit = 12000 } = {}) {
+      const start = performance.now();
+      const deadline = budgetMs === Infinity ? Infinity
+        : start + Math.max(0, (Number.isFinite(budgetMs) ? budgetMs : 220) - (first ? durationMs : 0));
+      first = false;
+      const allowance = cap(nodeLimit, 12000, 1000000);
+      const stopAt = counters.nodes + allowance;
+      while (!completed && !numeric?.done() && tasks.length && counters.nodes < stopAt && performance.now() < deadline) {
+        const task = tasks.shift();
+        if (!task.next().done) {
+          counters.nodes++;
+          tasks.push(task);
+        }
+      }
+      const result = completed || (numeric ? numeric.result(kind, nimber, zeroWinner) : { kind, exact: false, winner: null });
+      if (result.exact) completed = result;
+      const status = result.exact ? 'exact' : completed || !tasks.length ? 'search-complete'
+        : counters.nodes >= stopAt ? 'node-limit' : 'time-limit';
+      if (completed) tasks.length = 0;
+      durationMs += performance.now() - start;
+      return { ...result, ...counters, durationMs, searchEdges, status };
+    },
+  };
+}
+
+/** Existing one-shot callers keep their original wire format. */
+export function analyzePosition(board, live, side, variant = 'redblue', options = {}) {
+  const result = createAnalysisSession(board, live, side, variant, options).refine(options);
+  if (options.stats) return result;
+  const { nodes, cacheHits, durationMs, status, searchEdges, ...game } = result;
+  return game;
 }

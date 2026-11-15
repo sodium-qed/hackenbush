@@ -2,7 +2,7 @@
 
 **[Play Hackenbush in your browser](https://sodium-qed.github.io/hackenbush/)**
 
-Play **Green Hackenbush** or **Red–Blue Hackenbush** on a generated garden, draw your own board, or take on the daily puzzle. Each player has 10 seconds per turn to cut one eligible branch.
+Play **Green Hackenbush** or **Red–Blue Hackenbush** on a generated garden, draw your own board, or take on the daily puzzle. Standard matches and daily challenges give each player 10 seconds per cut. Rated bot matches are untimed.
 
 ![A Hackenbush match in the browser](media/hackenbush-table.jpg)
 
@@ -37,7 +37,27 @@ Choose a ruleset and select **Build a board** in match setup. Connect dots to dr
 
 ## Review a finished match
 
-Select **Analyze game** on the winner's card to revisit the opening or any cut. Green positions display a nimber. Red–Blue positions display a signed value or certified bounds when the exact value takes longer to compute. The analysis describes perfect play without the turn clock, including when a timeout ended the actual match.
+Select **Analyze game** on the winner's card to revisit the opening or any cut. Green positions display a nimber. Red–Blue positions display a signed dyadic value or certified bounds. The winner for the displayed player to move can be established before the exact value. **Quick**, **Deep** and **Research** spend progressively larger, bounded search budgets in a Web Worker. You can stop a search, inspect the certified endpoints, and see how much work it used. The structural difficulty estimate describes the available cuts and how easy they are to distinguish under two reference policies. The analysis assumes perfect play without a turn clock.
+
+## Play a rated bot match
+
+Open **Rated** in the navigation. Choose a ruleset and a bot, then **Draw rated match**. Groundwork draws a fresh small, standard or large garden, assigns both seats, and shows the estimated chance of winning. Each bot's benchmark comes from paired-seat self-play on the same deal family. **Green** and **Red–Blue** each have a local rating and uncertainty estimate.
+
+Pause and resume your assigned match at any time. The generator uses fresh deals, and an unfinished game occupies the rated slot until you finish or resign it. If every possible sequence against that bot gives the same outcome, the result carries zero rating evidence. Games whose eligibility cannot be certified also carry zero weight. A perfect-play advantage by itself does not settle what a fallible player and bot will do.
+
+The result card shows your change. Reopen **Rated** to see the progression chart, uncertainty band, recent opponents and replays. You can reset both pools in that panel. Ratings, history and positions are kept on this browser. Daily attempts and manually selected boards remain separate.
+
+### Research and reproducibility
+
+| Topic | Documentation |
+|---|---|
+| Nimber and number arithmetic, graph complexity | [Mathematical foundations](docs/research/MATHEMATICAL_FOUNDATIONS.md) |
+| Certified search, worker budgets and cancellation | [Analyzer architecture](docs/research/ANALYZER_ARCHITECTURE.md) |
+| Skill, opening advantage and uncertainty | [Rating model](docs/research/RATING_MODEL.md) |
+| Paired bot matches, fitted strengths and held-out evaluation | [Bot calibration](docs/research/BOT_CALIBRATION.md) |
+| Strategic cut choices and controlled position experiments | [Difficulty model](docs/research/DIFFICULTY_MODEL.md) |
+| Exact oracle and comparison with the previous analyzer | [Validation results](docs/research/VALIDATION_RESULTS.md) |
+| Limits of the measurements and open questions | [Open problems](docs/research/OPEN_PROBLEMS.md) |
 
 ## Practice, color, and sound
 
@@ -64,5 +84,16 @@ Open <http://localhost:8000>. Run the game tests with Node.js 20 or later.
 ```sh
 node --test tests/*.test.mjs
 ```
+
+Reproduce the analyzer benchmark, structural study and calibrated ladder from the repository root.
+
+```sh
+node scripts/benchmark-analyzer.mjs
+node scripts/difficulty-study.mjs
+node scripts/calibration.mjs --check
+node scripts/validate-ratings.mjs
+```
+
+With Python Playwright and Chromium installed, `python3 scripts/smoke-browser.py` also plays a full rated game through the interface, opens the same game in two tabs, checks the rating chart and exercises the replay workers.
 
 The game runs in the browser. Turn links work without accounts or a game server. The typefaces in `dist/fonts` include their Open Font Licenses.
