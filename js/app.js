@@ -557,7 +557,10 @@ function checkDeadline(now) {
   if (resolved === game) return false;
   if (syncPosition()) return true;
   activate(resolved);
-  if (resolved.timedOut) audio.end({ timedOut: true });
+  if (resolved.timedOut) {
+    audio.end({ timedOut: true });
+    boardView.celebrate(game.variant === 'green' ? 'green' : game.victor);
+  }
   return true;
 }
 function tick() {
@@ -598,7 +601,10 @@ function makeMove(id) {
   const a = game.board.nodes.find(node => node.id === edge.a);
   const b = game.board.nodes.find(node => node.id === edge.b);
   audio.cut({ part: edge.part, fallen: last.fallen.length, position: (a.x + b.x) / 1800 });
-  if (game.victor) audio.end({ timedOut: false });
+  if (game.victor) {
+    audio.end({ timedOut: false });
+    boardView.celebrate(game.variant === 'green' ? 'green' : game.victor);
+  }
   announce(seatName(last.side) + ' cut branch ' + last.branch + '. ' + turnMessage());
   scheduleTurn();
 }
@@ -623,7 +629,7 @@ function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
   setPhase(previewUntil ? 'preview' : 'playing');
   saveMatch();
   feedback(note);
-  renderMatch({ reset: true });
+  renderMatch({ reset: true, grow: Boolean(previewUntil) });
   if (scroll) {
     $('game-table').focus({ preventScroll: true });
     $('game-table').scrollIntoView({ block: 'nearest', behavior: 'instant' });
