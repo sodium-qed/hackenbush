@@ -51,6 +51,8 @@
 }
 
 .hb-field__ground,
+.hb-field__shadows,
+.hb-field__sparks,
 .hb-field__regions,
 .hb-field__joints,
 .hb-field__effects,
@@ -96,6 +98,8 @@
 .hb-field__halo,
 .hb-field__edge-keyline,
 .hb-field__stem,
+.hb-field__sheen,
+.hb-field__shadow,
 .hb-field__stripes {
   fill: none;
   stroke-linecap: round;
@@ -114,6 +118,31 @@
 }
 
 .hb-field--dense .hb-field__stem--support { stroke-width: 4.25; }
+
+/* Light falls from the upper left: a soft cast shadow below each branch
+   and a narrow highlight along its lit side. */
+.hb-field__shadow {
+  stroke: #2d3a24;
+  stroke-width: calc((var(--hb-stem) + 2.4) * 1px);
+  opacity: .2;
+  transform: translate(1.3px, 2.5px);
+  transition: opacity 140ms ease-out;
+}
+
+.hb-field__shadow--falling { opacity: .07; }
+
+.hb-field__sheen {
+  stroke: #fff6dc;
+  stroke-width: calc(var(--hb-stem) * .25px);
+  opacity: .36;
+  transform: translate(-.75px, -.95px);
+}
+
+.hb-field__stem,
+.hb-field__edge-keyline,
+.hb-field__halo {
+  transition: stroke-width 130ms ease-out, opacity 130ms ease-out;
+}
 
 .hb-field__stripes {
   stroke: var(--hb-paper);
@@ -135,12 +164,32 @@
   opacity: 0.56;
 }
 
+.hb-field__edge--hint .hb-field__halo { animation: hb-field-hint 1.1s linear infinite; }
+
 .hb-field__edge--target .hb-field__halo {
   stroke: var(--hb-branch);
   stroke-width: var(--hb-halo);
   stroke-linecap: round;
   stroke-dasharray: none;
-  opacity: 0.23;
+  opacity: 0.3;
+  animation: hb-field-breathe 1.5s ease-in-out infinite;
+}
+
+.hb-field__edge--target .hb-field__edge-keyline {
+  stroke: #fffdf2;
+  stroke-width: calc((var(--hb-target-stem) + 3.1) * 1px);
+  opacity: .96;
+}
+
+.hb-field__edge--target .hb-field__sheen { opacity: .55; }
+
+@keyframes hb-field-breathe {
+  0%, 100% { opacity: .3; stroke-width: var(--hb-halo); }
+  50% { opacity: .18; stroke-width: calc(var(--hb-halo) + 5px); }
+}
+
+@keyframes hb-field-hint {
+  to { stroke-dashoffset: -6.2; }
 }
 
 .hb-field__edge--target .hb-field__stem {
@@ -153,12 +202,15 @@
   opacity: 0.39;
 }
 
-.hb-field__edge--falling .hb-field__stripes {
+.hb-field__edge--falling .hb-field__stripes,
+.hb-field__edge--falling .hb-field__sheen {
   opacity: 0;
 }
 
 .hb-field__joint {
-  fill: var(--hb-joint);
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 130ms ease-out;
 }
 
 .hb-field__joint--root {
@@ -180,6 +232,24 @@
 
 .hb-field__svg--cuttable {
   cursor: pointer;
+}
+
+.hb-field__scissors-mark {
+  transform-origin: 0 -3.9px;
+  filter: drop-shadow(0 1.2px 1px rgba(38, 48, 30, .34));
+  animation: hb-field-snip 1.15s ease-in-out infinite;
+}
+
+.hb-field__scissors:not([display="none"]) { animation: hb-field-arrive 170ms cubic-bezier(.2, 1.5, .5, 1) both; }
+
+@keyframes hb-field-arrive {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes hb-field-snip {
+  0%, 100% { transform: scale(1.18) rotate(0deg); }
+  50% { transform: scale(1.18) rotate(-7deg) translateY(-.9px); }
 }
 
 .hb-field__scissor-back,
@@ -242,8 +312,18 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .hb-field__region { transition: none; }
-  .hb-field__effects { display: none; }
+  .hb-field__region,
+  .hb-field__stem,
+  .hb-field__edge-keyline,
+  .hb-field__halo,
+  .hb-field__shadow,
+  .hb-field__joint { transition: none; }
+  .hb-field__edge--target .hb-field__halo,
+  .hb-field__edge--hint .hb-field__halo,
+  .hb-field__scissors,
+  .hb-field__scissors-mark { animation: none; }
+  .hb-field__effects,
+  .hb-field__sparks { display: none; }
 }
 
 @media (forced-colors: active) {
@@ -252,6 +332,9 @@
   .hb-field__landscape,
   .hb-field__peel,
   .hb-field__detached-region,
+  .hb-field__shadows,
+  .hb-field__sheen,
+  .hb-field__sparks,
   .hb-field__edge-keyline { display: none; }
   .hb-field__dot { fill: GrayText; }
   .hb-field__ground-line,

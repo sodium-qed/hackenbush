@@ -258,7 +258,9 @@ function horizontalProjection(width, spans) {
 }
 
 function addScissors() {
-  const mark = svgElement('g', { class: 'hb-field__scissors', 'aria-hidden': 'true', display: 'none' });
+  const place = svgElement('g', { class: 'hb-field__scissors', 'aria-hidden': 'true', display: 'none' });
+  const mark = svgElement('g', { class: 'hb-field__scissors-mark' });
+  place.append(mark);
   const blades = 'M-4.7,2.7L4.5,-10.6M4.7,2.7L-4.5,-10.6';
   mark.append(svgElement('path', { class: 'hb-field__scissor-back', d: blades }));
   mark.append(svgElement('path', { class: 'hb-field__scissor-ink', d: blades }));
@@ -269,7 +271,7 @@ function addScissors() {
     }));
   }
   mark.append(svgElement('circle', { class: 'hb-field__scissor-pin', cx: 0, cy: -3.9, r: 0.9 }));
-  return mark;
+  return place;
 }
 
 function distanceToEdge(point, shape) {
@@ -314,19 +316,25 @@ export function createBoard(container, { onCut } = {}) {
   const soil = svgElement('linearGradient', { id: `${prefix}-soil`, x1: 0, x2: 0, y1: 0, y2: 1 });
   soil.append(svgElement('stop', { offset: '0%', 'stop-color': '#76855b', 'stop-opacity': 0.14 }));
   soil.append(svgElement('stop', { offset: '100%', 'stop-color': '#76855b', 'stop-opacity': 0 }));
-  defs.append(dots, hatching, soil);
+  const bead = svgElement('radialGradient', { id: `${prefix}-bead`, cx: 0.36, cy: 0.3, r: 0.75 });
+  bead.append(svgElement('stop', { offset: '0%', 'stop-color': '#71876d' }));
+  bead.append(svgElement('stop', { offset: '46%', 'stop-color': '#3a503d' }));
+  bead.append(svgElement('stop', { offset: '100%', 'stop-color': '#233126' }));
+  defs.append(dots, hatching, soil, bead);
   const grid = svgElement('rect', { x: 0, y: 0, width: '100%', height: '100%', fill: `url(#${prefix}-dots)`, 'aria-hidden': true });
   const ground = svgElement('g', { 'aria-hidden': true, class: 'hb-field__ground' });
   const groundLine = svgElement('path', { class: 'hb-field__ground-line' });
   const groundWash = svgElement('rect', { height: 13, fill: `url(#${prefix}-soil)` });
   const groundTicks = svgElement('rect', { height: 7.1, fill: `url(#${prefix}-hatching)` });
   ground.append(groundWash, groundTicks, groundLine);
-  const branches = svgElement('g');
+  const shadows = svgElement('g', { class: 'hb-field__shadows', 'aria-hidden': true });
+  const branches = svgElement('g', { class: 'hb-field__branches' });
+  const sparks = svgElement('g', { class: 'hb-field__sparks', 'aria-hidden': true });
   const joints = svgElement('g', { class: 'hb-field__joints', 'aria-hidden': true });
   const effects = svgElement('g', { class: 'hb-field__effects', 'aria-hidden': true });
   const scissors = addScissors();
   const art = createRegionArt(prefix, svgElement);
-  svg.append(desc, defs, art.defs, art.shapes, grid, ground, art.layer, effects, branches, joints, scissors);
+  svg.append(desc, defs, art.defs, art.shapes, grid, ground, art.layer, shadows, effects, branches, joints, sparks, scissors);
   frame.append(landscape, svg);
   container.append(frame);
 
@@ -365,6 +373,7 @@ export function createBoard(container, { onCut } = {}) {
   function build(next) {
     clearEffects();
     branches.replaceChildren();
+    shadows.replaceChildren();
     joints.replaceChildren();
     nodes.clear();
     edges.clear();
@@ -372,7 +381,7 @@ export function createBoard(container, { onCut } = {}) {
     press = null;
     art.build(next);
     for (const node of next.nodes) {
-      const dot = svgElement('circle', { class: 'hb-field__joint' });
+      const dot = svgElement('circle', { class: 'hb-field__joint', fill: `url(#${prefix}-bead)` });
       joints.append(dot);
       nodes.set(node.id, { ...node, dot, at: null });
     }
@@ -386,10 +395,13 @@ export function createBoard(container, { onCut } = {}) {
       const keyline = svgElement('path', { class: 'hb-field__edge-keyline' });
       const stem = svgElement('path', { class: 'hb-field__stem' });
       stem.classList.toggle('hb-field__stem--support', ['root', 'stem', 'trunk', 'trellis post'].includes(edge.part));
+      const sheen = svgElement('path', { class: 'hb-field__sheen' });
       const stripes = svgElement('path', { class: 'hb-field__stripes' });
-      group.append(hit, halo, keyline, stem, stripes);
+      const shadow = svgElement('path', { class: 'hb-field__shadow' });
+      group.append(hit, halo, keyline, stem, sheen, stripes);
       branches.append(group);
-      edges.set(edge.id, { ...edge, index, group, hit, halo, keyline, stem, stripes, center: null });
+      shadows.append(shadow);
+      edges.set(edge.id, { ...edge, index, group, hit, halo, keyline, stem, sheen, stripes, shadow, center: null });
     }
     incident = incidence([...edges.values()]);
     spans = branchSpans([...edges.values()], nodes);
@@ -432,7 +444,7 @@ export function createBoard(container, { onCut } = {}) {
       const middle = parameterAtLength(edge.shape, edge.shape.length / 2);
       edge.center = pointAt(edge.shape, middle);
       const tangent = tangentAt(edge.shape, middle);
-      for (const part of [edge.hit, edge.halo, edge.keyline, edge.stem]) part.setAttribute('d', edge.shape.path);
+      for (const part of [edge.hit, edge.halo, edge.keyline, edge.stem, edge.sheen, edge.shadow]) part.setAttribute('d', edge.shape.path);
       edge.stripes.setAttribute('d', crossbars(edge.shape, edge.color, dense ? 1.5 : 1.8));
       let angle = Math.atan2(tangent.y, tangent.x) * 180 / Math.PI;
       if (angle >= 90) angle -= 180;
@@ -451,6 +463,7 @@ export function createBoard(container, { onCut } = {}) {
     for (const [id, view] of edges) {
       view.group.classList.toggle('hb-field__edge--target', id === edge?.id);
       view.group.classList.toggle('hb-field__edge--falling', willFall.has(id));
+      view.shadow.classList.toggle('hb-field__shadow--falling', willFall.has(id) || id === edge?.id);
     }
     for (const [id, node] of nodes) {
       const losesSupport = remaining && !node.ground && !incident.get(id)?.some(adjacent => remaining.has(adjacent.id));
@@ -608,6 +621,7 @@ export function createBoard(container, { onCut } = {}) {
       const visible = live.has(id);
       const enabled = available.has(id);
       view.group.setAttribute('display', visible ? 'inline' : 'none');
+      view.shadow.setAttribute('display', visible ? 'inline' : 'none');
       view.group.setAttribute('tabindex', id === roving ? '0' : '-1');
       const disabled = String(!enabled);
       if (view.group.getAttribute('aria-disabled') !== disabled) view.group.setAttribute('aria-disabled', disabled);

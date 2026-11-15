@@ -3,7 +3,7 @@ import { dailyOpening } from './daily.js';
 import { renderLandscape } from './landscape.js';
 import { isDailySeed, TEXT_BOARD_VERSION } from './map-seed.js';
 import { cutEdge, initialEdges, otherSide } from './rules.js';
-import { analyzePosition, dyadicChange } from './analysis-values.js?v=7';
+import { analyzePosition, dyadicChange } from './analysis-values.js?v=8';
 
 const variants = { green: 'Green', redblue: 'Red–Blue', mixed: 'Mixed' };
 const sideNames = { blue: 'Blue', red: 'Red' };
@@ -260,7 +260,7 @@ export function createAnalyzer(dialog) {
 
     if (typeof Worker !== 'function') { fallback(); return; }
     try {
-      worker = new Worker(new URL('./analysis-worker.js?v=7', import.meta.url), { type: 'module' });
+      worker = new Worker(new URL('./analysis-worker.js?v=8', import.meta.url), { type: 'module' });
       worker.onmessage = ({ data }) => {
         if (!active()) return;
         received(data.index, data.result);
