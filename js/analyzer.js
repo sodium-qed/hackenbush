@@ -2,7 +2,7 @@ import { createBoard } from './board.js';
 import { cachedDailyWinner } from './daily.js';
 import { renderLandscape } from './landscape.js';
 import { cutEdge, initialEdges, otherSide } from './rules.js';
-import { createAnalysisSession, dyadicChange } from './analysis-values.js?v=9';
+import { createAnalysisSession, dyadicChange } from './analysis-values.js?v=10';
 import { analysisModes, proofLimit, recentCache } from './analysis-modes.js';
 
 const variants = { green: 'Green', redblue: 'Red–Blue', mixed: 'Mixed' };
@@ -413,7 +413,7 @@ export function createAnalyzer(dialog) {
 
     if (typeof Worker !== 'function') { fallback(); return; }
     try {
-      worker ??= new Worker(new URL('./analysis-worker.js?v=9', import.meta.url), { type: 'module' });
+      worker ??= new Worker(new URL('./analysis-worker.js?v=10', import.meta.url), { type: 'module' });
       const source = worker;
       worker.onmessage = ({ data }) => {
         if (worker !== source) return;

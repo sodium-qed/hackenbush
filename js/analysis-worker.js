@@ -1,5 +1,5 @@
 import { analysisModes, certificateKey, intersectProof, proofLimit, recentCache } from './analysis-modes.js';
-import { createAnalysisSession } from './analysis-values.js?v=9';
+import { createAnalysisSession } from './analysis-values.js?v=10';
 import { estimateDifficulty } from './difficulty.js';
 
 const sessions = recentCache(4);
