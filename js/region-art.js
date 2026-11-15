@@ -270,5 +270,11 @@ export function createRegionArt(prefix, svgElement) {
       .map(region => copy(region, 'hb-field__detached-region'));
   }
 
-  return { defs, shapes, layer, build, project, setLive, preview, grow, opened, detached };
+  // Midtones of the cells a cut opens (touching) or carries away (enclosed).
+  function tints(ids, touching = false) {
+    return regions.filter(region => region.visible && (touching ? region.ids.some(id => ids.has(id)) : region.ids.every(id => ids.has(id))))
+      .map(region => materials[region.material].colors[1]);
+  }
+
+  return { defs, shapes, layer, build, project, setLive, preview, grow, opened, detached, tints };
 }

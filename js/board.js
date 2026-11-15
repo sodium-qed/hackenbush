@@ -327,7 +327,10 @@ export function createBoard(container, { onCut } = {}) {
   const groundLine = svgElement('path', { class: 'hb-field__ground-line' });
   const groundWash = svgElement('rect', { height: 13, fill: `url(#${prefix}-soil)` });
   const groundTicks = svgElement('rect', { height: 7.1, fill: `url(#${prefix}-hatching)` });
-  ground.append(groundWash, groundTicks, groundLine);
+  const mounds = svgElement('path', { class: 'hb-field__mound' });
+  const bladesDark = svgElement('path', { class: 'hb-field__blade' });
+  const bladesLight = svgElement('path', { class: 'hb-field__blade hb-field__blade--lit' });
+  ground.append(groundWash, groundTicks, groundLine, mounds, bladesDark, bladesLight);
   const shadows = svgElement('g', { class: 'hb-field__shadows', 'aria-hidden': true });
   const branches = svgElement('g', { class: 'hb-field__branches' });
   const sparks = svgElement('g', { class: 'hb-field__sparks', 'aria-hidden': true });
@@ -437,6 +440,7 @@ export function createBoard(container, { onCut } = {}) {
       node.dot.setAttribute('cx', node.at.x);
       node.dot.setAttribute('cy', node.at.y);
     }
+    plantGround(margin);
     for (const edge of edges.values()) {
       const anchor = nodes.get(edge.a);
       const a = anchor.at;
@@ -457,6 +461,44 @@ export function createBoard(container, { onCut } = {}) {
       if (angle < -90) angle += 180;
       edge.angle = angle;
     }
+  }
+
+  // Every rooted joint sits in a small mound of soil, and grass tufts break
+  // up the ruled ground line between them.
+  function plantGround(margin) {
+    const y = groundY;
+    const n = v => v.toFixed(1);
+    const chance = i => ((Math.imul(i + 1, 0x9e3779b1) >>> 0) % 1000) / 1000;
+    const roots = [...nodes.values()].filter(node => node.ground).map(node => node.at.x).sort((a, b) => a - b);
+    let soil = '';
+    const blades = ['', ''];
+    let count = 0;
+    const blade = (x, lean, tall) => {
+      blades[count++ % 2] += `M${n(x)},${n(y)}Q${n(x + lean * 0.25)},${n(y - tall * 0.6)} ${n(x + lean)},${n(y - tall)}`;
+    };
+    for (const [i, x] of roots.entries()) {
+      const half = 15.5 + chance(i) * 4, top = 8.6;
+      soil += `M${n(x - half)},${y}C${n(x - half * 0.55)},${n(y - 1)} ${n(x - half * 0.5)},${n(y - top + 0.2)} ${n(x)},${n(y - top)}` +
+        `C${n(x + half * 0.5)},${n(y - top + 0.2)} ${n(x + half * 0.55)},${n(y - 1)} ${n(x + half)},${y}Z`;
+      for (const side of [-1, 1]) {
+        blade(x + side * (half - 1.5), side * 3.6, 6.5 + chance(i * 7 + side) * 3);
+        blade(x + side * (half - 4.8), side * 1.7, 9 + chance(i * 13 + side) * 3.5);
+        blade(x + side * (half + 1.6), side * 4.2, 4.2 + chance(i * 17 + side) * 2);
+      }
+    }
+    let x = margin + 9 + chance(97) * 24, i = 0;
+    while (x < width - margin - 9) {
+      if (!roots.some(root => Math.abs(root - x) < 27)) {
+        const tall = 4.5 + chance(i * 5 + 3) * 4.5;
+        blade(x - 2.4, -2.8, tall * 0.72);
+        blade(x, chance(i * 11) * 2 - 1, tall);
+        blade(x + 2.3, 3, tall * 0.8);
+      }
+      x += 31 + chance(i++ * 3 + 41) * 38;
+    }
+    mounds.setAttribute('d', soil);
+    bladesDark.setAttribute('d', blades[0]);
+    bladesLight.setAttribute('d', blades[1]);
   }
 
   function preview() {
@@ -550,6 +592,7 @@ export function createBoard(container, { onCut } = {}) {
   // Chips of the cut branch scatter from the blades.
   function burst(layer, cut) {
     const { x, y } = cut.center;
+    const opened = art.tints(new Set([cut.id]), true);
     const ring = svgElement('circle', { class: `hb-field__ring hb-field--${cut.color}`, r: 4 });
     layer.append(ring);
     ring.animate?.([
@@ -565,6 +608,7 @@ export function createBoard(container, { onCut } = {}) {
       const spin = (i % 2 ? 1 : -1) * (260 + speed * 5);
       const pale = i % 3 === 2 ? ' hb-field__chip--pale' : '';
       const chip = svgElement('path', { class: `hb-field__chip hb-field--${cut.color}${pale}`, d: 'M-2.7,0Q0,-2 2.7,0Q0,2 -2.7,0Z' });
+      if (pale && opened.length) chip.style.fill = opened[i % opened.length];
       layer.append(chip);
       const frames = [];
       for (let k = 0; k <= 6; k++) {
@@ -594,6 +638,37 @@ export function createBoard(container, { onCut } = {}) {
       ], { duration: 540, delay: impact.time * 1000, easing: 'ease-out', fill: 'both' });
     }
     return impact.time * 1000 + 540;
+  }
+
+  // Petals and leaves shake loose when a filled piece lands.
+  function scatter(layer, impact, colors, radius) {
+    const count = Math.min(9, 3 + colors.length * 2);
+    const reach = Math.max(0.7, Math.min(1.5, radius / 26));
+    let longest = 0;
+    for (let i = 0; i < count; i++) {
+      const fleck = svgElement('path', { class: 'hb-field__fleck', d: 'M-4,0Q0,-3.1 4,0Q0,3.1 -4,0Z' });
+      fleck.style.fill = colors[i % colors.length];
+      layer.append(fleck);
+      const side = i % 2 ? 1 : -1;
+      const vx = side * (16 + (i * 23) % 34) * reach;
+      const vy = -(58 + (i * 31) % 52) * reach;
+      const gravity = 330;
+      const flight = -2 * vy / gravity;
+      const spin = side * (240 + (i * 53) % 260);
+      const frames = [];
+      for (let k = 0; k <= 8; k++) {
+        const t = k / 8 * flight;
+        frames.push({
+          transform: `translate(${(impact.x + vx * t).toFixed(2)}px, ${(groundY - 2 + vy * t + gravity * t * t / 2).toFixed(2)}px) rotate(${(spin * t).toFixed(1)}deg) scale(${(1 - 0.25 * k / 8).toFixed(2)}, ${(0.45 + 0.55 * Math.abs(Math.cos(t * 7 + i))).toFixed(2)})`,
+          opacity: k === 0 ? 0 : 1, offset: k / 8 * 0.72
+        });
+      }
+      frames.push({ transform: frames.at(-1).transform, opacity: 0, offset: 1 });
+      const duration = flight * 1000 / 0.72;
+      fleck.animate?.(frames, { duration, delay: impact.time * 1000 + (i % 3) * 22, easing: 'linear', fill: 'both' });
+      longest = Math.max(longest, impact.time * 1000 + duration + 44);
+    }
+    return longest;
   }
 
   function animateRemoval(vanished, removed, cutId) {
@@ -674,7 +749,11 @@ export function createBoard(container, { onCut } = {}) {
       const spin = direction * Math.min(6.4, (78 + 76 * Math.abs(lean)) / (radius + 10));
       const flight = tumble(ghost, body, vx, -9, spin, floor, gravity);
       duration = Math.max(duration, flight.duration);
-      if (flight.impact && puffs++ < 6) duration = Math.max(duration, dust(loose, flight.impact, radius));
+      if (flight.impact && puffs++ < 6) {
+        duration = Math.max(duration, dust(loose, flight.impact, radius));
+        const colors = art.tints(new Set(piece.map(edge => edge.id)));
+        if (colors.length) duration = Math.max(duration, scatter(loose, flight.impact, colors, radius));
+      }
     }
     const timer = window.setTimeout(() => {
       batch.remove();
