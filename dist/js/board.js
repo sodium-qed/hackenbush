@@ -141,7 +141,7 @@ function fallingBody(shapes) {
 function tumble(group, body, vx, vy, spin, floor, gravity) {
   const step = 1 / 60;
   const frames = [];
-  let x = 0, y = 0, angle = 0, fadeAt = 0.48;
+  let x = 0, y = 0, angle = 0, fadeAt = 0.48, impact = null;
   for (let tick = 0; ; tick++) {
     const time = tick * step;
     if (tick) {
@@ -161,6 +161,7 @@ function tumble(group, body, vx, vy, spin, floor, gravity) {
       const overlap = body.y + y + footY - floor;
       if (overlap > 0) {
         y -= overlap;
+        impact ??= { time, x: body.x + x + footX };
         // A tip landing off-center exchanges vertical speed for rotation.
         // Low restitution and soil friction make the first bounce settle.
         const speed = Math.max(0, vy + spin * footX);
@@ -184,7 +185,7 @@ function tumble(group, body, vx, vy, spin, floor, gravity) {
   group.style.setProperty('transform-origin', `${body.x}px ${body.y}px`);
   const duration = (frames.length - 1) * step * 1000;
   group.animate?.(frames, { duration, easing: 'linear', fill: 'backwards' });
-  return duration;
+  return { duration, impact };
 }
 
 function incidence(edges) {
@@ -357,13 +358,18 @@ export function createBoard(container, { onCut } = {}) {
   const nodes = new Map();
   const edges = new Map();
   const timers = new Set();
+  let grown = [];
   const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)');
 
   function clearEffects() {
     for (const timer of timers) window.clearTimeout(timer);
     timers.clear();
     for (const animation of effects.getAnimations?.({ subtree: true }) ?? []) animation.cancel();
+    for (const animation of sparks.getAnimations?.({ subtree: true }) ?? []) animation.cancel();
+    for (const animation of grown) animation?.cancel();
+    grown = [];
     effects.replaceChildren();
+    sparks.replaceChildren();
   }
   function motionChanged() {
     if (reduceMotion.matches) clearEffects();
@@ -490,6 +496,106 @@ export function createBoard(container, { onCut } = {}) {
     preview();
   }
 
+  // The dealt garden grows out of the soil: each branch draws from its
+  // supported end, one step after the branch that carries it.
+  function growIn() {
+    if (reduceMotion?.matches) return;
+    const depth = new Map();
+    let frontier = [...nodes.values()].filter(node => node.ground).map(node => node.id);
+    for (const id of frontier) depth.set(id, 0);
+    let deepest = 0;
+    while (frontier.length) {
+      const next = [];
+      for (const id of frontier) {
+        for (const edge of incident.get(id) ?? []) {
+          const other = edge.a === id ? edge.b : edge.a;
+          if (!live.has(edge.id) || depth.has(other)) continue;
+          depth.set(other, depth.get(id) + 1);
+          deepest = depth.get(other);
+          next.push(other);
+        }
+      }
+      frontier = next;
+    }
+    const step = Math.max(40, Math.min(120, 1250 / (deepest + 1)));
+    const span = step * 1.7;
+    const ends = new Map();
+    for (const [id, edge] of edges) {
+      if (!live.has(id)) continue;
+      const a = depth.get(edge.a) ?? deepest, b = depth.get(edge.b) ?? deepest;
+      const delay = Math.min(a, b) * step;
+      const length = edge.shape.length;
+      const dash = `${length} ${length + 2}`;
+      const hidden = a <= b ? length + 1 : -length - 1;
+      const timing = { duration: span, delay, easing: 'cubic-bezier(.3,.7,.3,1)', fill: 'backwards' };
+      for (const part of [edge.shadow, edge.keyline, edge.stem, edge.sheen]) {
+        grown.push(part.animate?.([
+          { strokeDasharray: dash, strokeDashoffset: hidden },
+          { strokeDasharray: dash, strokeDashoffset: 0 }
+        ], timing));
+      }
+      grown.push(edge.stripes.animate?.([{ opacity: 0 }, { opacity: 1 }],
+        { duration: span * 0.6, delay: delay + span * 0.6, fill: 'backwards' }));
+      ends.set(id, delay + span);
+    }
+    for (const [id, node] of nodes) {
+      const delay = (depth.get(id) ?? deepest) * step + (node.ground ? 0 : span * 0.35);
+      grown.push(node.dot.animate?.([
+        { transform: 'scale(0)' }, { transform: 'scale(1.4)', offset: 0.65 }, { transform: 'scale(1)' }
+      ], { duration: 240, delay, easing: 'ease-out', fill: 'backwards' }));
+    }
+    grown.push(...art.grow(ends));
+  }
+
+  // Chips of the cut branch scatter from the blades.
+  function burst(layer, cut) {
+    const { x, y } = cut.center;
+    const ring = svgElement('circle', { class: `hb-field__ring hb-field--${cut.color}`, r: 4 });
+    layer.append(ring);
+    ring.animate?.([
+      { transform: `translate(${x}px, ${y}px) scale(.4)`, opacity: 0.85 },
+      { transform: `translate(${x}px, ${y}px) scale(4.4)`, opacity: 0 }
+    ], { duration: 420, easing: 'cubic-bezier(.2,.7,.3,1)', fill: 'both' });
+    const count = dense ? 6 : 9;
+    const flight = 0.58;
+    for (let i = 0; i < count; i++) {
+      const turn = (i + ((cut.index * 7 + i * 3) % 5) / 5) / count * Math.PI * 2;
+      const speed = 38 + (cut.index * 13 + i * 29) % 41;
+      const vx = Math.cos(turn) * speed, vy = Math.sin(turn) * speed - 30;
+      const spin = (i % 2 ? 1 : -1) * (260 + speed * 5);
+      const pale = i % 3 === 2 ? ' hb-field__chip--pale' : '';
+      const chip = svgElement('path', { class: `hb-field__chip hb-field--${cut.color}${pale}`, d: 'M-2.7,0Q0,-2 2.7,0Q0,2 -2.7,0Z' });
+      layer.append(chip);
+      const frames = [];
+      for (let k = 0; k <= 6; k++) {
+        const t = k / 6 * flight;
+        const size = 1 - 0.45 * k / 6;
+        frames.push({
+          transform: `translate(${(x + vx * t).toFixed(2)}px, ${(y + vy * t + 210 * t * t).toFixed(2)}px) rotate(${(spin * t).toFixed(1)}deg) scale(${size.toFixed(2)})`,
+          opacity: k < 4 ? 1 : (6 - k) / 3
+        });
+      }
+      chip.animate?.(frames, { duration: flight * 1000, easing: 'linear', fill: 'both' });
+    }
+  }
+
+  // A falling piece raises a little dust where it first meets the soil.
+  function dust(layer, impact, radius) {
+    const scale = Math.max(0.6, Math.min(1.6, radius / 24));
+    const y = groundY - 1.2;
+    for (const side of [-1, 0, 1]) {
+      const puff = svgElement('ellipse', { class: 'hb-field__dust', rx: 5.2, ry: 2.7 });
+      layer.append(puff);
+      const from = impact.x + side * 3 * scale;
+      puff.animate?.([
+        { transform: `translate(${from.toFixed(2)}px, ${y}px) scale(${(0.3 * scale).toFixed(2)})`, opacity: 0 },
+        { transform: `translate(${(from + side * 4 * scale).toFixed(2)}px, ${(y - 1.5 * scale).toFixed(2)}px) scale(${(0.7 * scale).toFixed(2)})`, opacity: 0.6, offset: 0.22 },
+        { transform: `translate(${(from + side * 15 * scale).toFixed(2)}px, ${(y - (side ? 3.5 : 8) * scale).toFixed(2)}px) scale(${(1.35 * scale).toFixed(2)})`, opacity: 0 }
+      ], { duration: 540, delay: impact.time * 1000, easing: 'ease-out', fill: 'both' });
+    }
+    return impact.time * 1000 + 540;
+  }
+
   function animateRemoval(vanished, removed, cutId) {
     if (!vanished.length || reduceMotion?.matches) return;
     const cut = vanished.includes(cutId) ? edges.get(cutId) : null;
@@ -497,7 +603,10 @@ export function createBoard(container, { onCut } = {}) {
     const fallen = vanished.filter(id => id !== cut?.id && (cut || reported.has(id))).map(id => edges.get(id));
     if (!cut && !fallen.length) return;
     const batch = svgElement('g');
+    const loose = svgElement('g');
     effects.append(batch);
+    sparks.append(loose);
+    let puffs = 0;
     const floor = groundY - 1.5;
     const gravity = Math.max(1700, height * 8.5);
     let duration = 460; // The wash of an opened region peels for 460 ms.
@@ -511,6 +620,7 @@ export function createBoard(container, { onCut } = {}) {
     }
 
     if (cut) {
+      burst(loose, cut);
       batch.append(...art.opened(cut.id));
       const middle = cut.shape.length / 2;
       const tangent = tangentAt(cut.shape, parameterAtLength(cut.shape, middle));
@@ -535,7 +645,7 @@ export function createBoard(container, { onCut } = {}) {
         const vx = kick * (tx - 0.85 * ty);
         const vy = kick * (0.55 * ty + 0.42 * tx) - 32;
         const spin = sign * (1.8 + 80 / (radius + 8));
-        duration = Math.max(duration, tumble(half, body, vx, vy, spin, floor, gravity));
+        duration = Math.max(duration, tumble(half, body, vx, vy, spin, floor, gravity).duration);
       }
     }
     for (const piece of components(fallen)) {
@@ -562,10 +672,13 @@ export function createBoard(container, { onCut } = {}) {
       const direction = Math.abs(lean) > 0.08 ? Math.sign(lean) : shear;
       const vx = direction * (23 + 47 * Math.abs(lean));
       const spin = direction * Math.min(6.4, (78 + 76 * Math.abs(lean)) / (radius + 10));
-      duration = Math.max(duration, tumble(ghost, body, vx, -9, spin, floor, gravity));
+      const flight = tumble(ghost, body, vx, -9, spin, floor, gravity);
+      duration = Math.max(duration, flight.duration);
+      if (flight.impact && puffs++ < 6) duration = Math.max(duration, dust(loose, flight.impact, radius));
     }
     const timer = window.setTimeout(() => {
       batch.remove();
+      loose.remove();
       timers.delete(timer);
     }, Math.ceil(duration) + 34);
     timers.add(timer);
@@ -581,7 +694,7 @@ export function createBoard(container, { onCut } = {}) {
     return target?.closest?.('[data-edge-id]')?.getAttribute('data-edge-id') ?? null;
   }
 
-  function update({ board: next, live: ids, side: nextSide, locked: disable = false, hintId = null, removed = [], cutId = null, reset = false }) {
+  function update({ board: next, live: ids, side: nextSide, locked: disable = false, hintId = null, removed = [], cutId = null, reset = false, grow = false }) {
     const activeElement = document.activeElement;
     const hadFocus = svg.contains(activeElement);
     const previousFocus = hadFocus ? edgeId(activeElement) : null;
@@ -639,6 +752,7 @@ export function createBoard(container, { onCut } = {}) {
       if (target !== document.activeElement) target.focus({ preventScroll: true });
     }
     preview();
+    if (grow) growIn();
   }
 
   // Hit paths overlap at joints. Compare the visible curves in screen space

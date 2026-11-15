@@ -60,7 +60,7 @@
   pointer-events: none;
 }
 
-.hb-field__region { transition: opacity 120ms ease-out; }
+.hb-field__region { transition: opacity 120ms ease-out; transform-box: fill-box; transform-origin: center; }
 .hb-field__cut-wash { opacity: 0; }
 .hb-field__region--opening { opacity: .68; }
 .hb-field__region--opening .hb-field__cut-wash { opacity: .72; }
@@ -275,6 +275,23 @@
 .hb-field__scissor-pin {
   fill: var(--hb-paper);
 }
+
+.hb-field__ring {
+  fill: none;
+  stroke: var(--hb-branch);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.hb-field__chip {
+  fill: var(--hb-branch);
+  stroke: #fff7de;
+  stroke-width: .45;
+}
+
+.hb-field__chip--pale { fill: #fff1c9; stroke: none; }
+
+.hb-field__dust { fill: #b9ad84; }
 
 .hb-field__snip,
 .hb-field__fall {

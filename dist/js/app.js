@@ -623,7 +623,7 @@ function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
   setPhase(previewUntil ? 'preview' : 'playing');
   saveMatch();
   feedback(note);
-  renderMatch({ reset: true });
+  renderMatch({ reset: true, grow: Boolean(previewUntil) });
   if (scroll) {
     $('game-table').focus({ preventScroll: true });
     $('game-table').scrollIntoView({ block: 'nearest', behavior: 'instant' });
