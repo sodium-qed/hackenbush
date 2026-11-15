@@ -293,6 +293,14 @@
 
 .hb-field__dust { fill: #b9ad84; }
 
+.hb-field__petal {
+  fill: var(--hb-branch);
+  stroke: #fff7de;
+  stroke-width: .5;
+}
+
+.hb-field__petal--gold { fill: #ecba48; }
+
 .hb-field__snip,
 .hb-field__fall {
   transform-box: view-box;

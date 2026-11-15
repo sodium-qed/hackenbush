@@ -903,9 +903,48 @@ export function createBoard(container, { onCut } = {}) {
   else window.addEventListener('resize', onResize);
   geometry();
   fit();
+  // Petals in the winner's color drift down over the final position.
+  function celebrate(color) {
+    if (reduceMotion?.matches) return;
+    const shower = svgElement('g');
+    sparks.append(shower);
+    let longest = 0;
+    for (let i = 0; i < 34; i++) {
+      const x = width * (0.03 + 0.94 * ((i * 0.618034) % 1));
+      const sway = (i % 2 ? 1 : -1) * (12 + (i * 17) % 22);
+      const size = 1.15 + ((i * 7) % 6) / 6;
+      const turn = (i % 2 ? -1 : 1) * (150 + (i * 37) % 210);
+      const gold = i % 3 === 0 ? ' hb-field__petal--gold' : '';
+      const petal = svgElement('path', {
+        class: `hb-field__petal hb-field--${color}${gold}`, d: 'M0,-4.8C3.5,-2.7 3.3,2.5 0,4.8C-3.3,2.5 -3.5,-2.7 0,-4.8Z'
+      });
+      shower.append(petal);
+      const frames = [];
+      for (let k = 0; k <= 8; k++) {
+        const t = k / 8;
+        const px = x + sway * Math.sin(t * Math.PI * 2.4 + i);
+        const py = -10 + (groundY + 8) * t;
+        frames.push({
+          transform: `translate(${px.toFixed(2)}px, ${py.toFixed(2)}px) rotate(${(turn * t).toFixed(1)}deg) scale(${size.toFixed(2)}, ${(size * (0.55 + 0.45 * Math.cos(t * 9 + i))).toFixed(2)})`,
+          opacity: k === 0 ? 0 : k >= 7 ? (8 - k) * 0.85 : 0.92
+        });
+      }
+      const duration = 1700 + (i * 131) % 1100;
+      const delay = (i * 67) % 900;
+      petal.animate?.(frames, { duration, delay, easing: 'linear', fill: 'both' });
+      longest = Math.max(longest, duration + delay);
+    }
+    const timer = window.setTimeout(() => {
+      shower.remove();
+      timers.delete(timer);
+    }, longest + 34);
+    timers.add(timer);
+  }
+
   return {
     landscape,
     update,
+    celebrate,
     destroy() {
       observer?.disconnect();
       if (!observer) window.removeEventListener('resize', onResize);
