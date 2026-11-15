@@ -1,11 +1,10 @@
 import { generateBoard } from './generator.js';
+import { normalizeMapSeed } from './map-seed.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
-import { normalizePlayers } from './session.js';
+import { normalizePlayers, supportsBoard } from './session.js';
 
 const PREFIX = '#turn=';
 const SIDES = ['blue', 'red'];
-const VARIANTS = new Set(['green', 'redblue', 'mixed']);
-const COMMON_SIZES = new Set(['small', 'standard', 'large']);
 const MAX_SEED_BYTES = 256;
 const MAX_NAME_BYTES = 24 * 4; // A Unicode scalar needs at most four UTF-8 bytes.
 const MATCH_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -53,11 +52,6 @@ function checksum(payload) {
   return ((crc ^ 0xffffffff) >>> 0).toString(16).padStart(8, '0');
 }
 
-function supportsSettings(variant, difficulty, boardVersion) {
-  if (boardVersion === 3) return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
-  return COMMON_SIZES.has(difficulty) && VARIANTS.has(variant);
-}
-
 function replay(board, moves, firstSide, timedOut) {
   if (moves.length > board.edges.length) return null;
   let live = initialEdges(board);
@@ -97,21 +91,21 @@ function linkPlayers(players, firstSide) {
 }
 
 /** Share the resolved draw, deliberate cuts, and any terminal timeout. An invitation may have zero cuts.
- * A generation-3 board uses ten-second turns. Older boards may be played with or without the clock.
+ * Expert boards use ten-second turns. Generation 4 map codes are six hexadecimal digits.
  * An active deadline belongs to the receiving device and never goes into the URL.
  * Throws on unsupported settings, an invalid identity, or an illegal/oversized history.
  */
 export function encodeTurn({
-  seed, boardVersion = 3, variant = 'green', difficulty = boardVersion === 3 ? 'expert' : 'standard',
-  moves, firstSide = 'blue', players, matchId, timed = boardVersion === 3, timedOut = null, wireVersion,
+  seed: inputSeed, boardVersion = 4, variant = 'green', difficulty = boardVersion >= 3 ? 'expert' : 'standard',
+  moves, firstSide = 'blue', players, matchId, timed = boardVersion >= 3, timedOut = null, wireVersion,
 }) {
-  if (!supportsSettings(variant, difficulty, boardVersion)) {
-    throw new RangeError('Unknown variant or difficulty.');
+  if (!supportsBoard(boardVersion, variant, difficulty)) {
+    throw new RangeError('Unknown board version, variant, or difficulty.');
   }
-  if (!SIDES.includes(firstSide) || ![1, 2, 3].includes(boardVersion)) {
-    throw new RangeError('Unknown opening side or board version.');
+  if (!SIDES.includes(firstSide)) {
+    throw new RangeError('Unknown opening side.');
   }
-  if (typeof timed !== 'boolean' || (boardVersion === 3 && !timed) ||
+  if (typeof timed !== 'boolean' || (boardVersion >= 3 && !timed) ||
       (timedOut !== null && (!timed || !SIDES.includes(timedOut)))) {
     throw new RangeError('Invalid turn clock or timeout.');
   }
@@ -121,6 +115,8 @@ export function encodeTurn({
   if (!Array.isArray(moves) || moves.length > MAX_MOVES) {
     throw new RangeError('The move list must contain at most 256 cuts.');
   }
+  const seed = boardVersion === 4 ? normalizeMapSeed(inputSeed) : inputSeed;
+  if (boardVersion === 4 && seed === null) throw new RangeError('A map code must contain six hexadecimal digits.');
   const seedToken = encodeText(seed, MAX_SEED_BYTES);
   const seats = linkPlayers(players, firstSide);
   const blue = encodeText(seats.blue.name, MAX_NAME_BYTES);
@@ -158,7 +154,7 @@ function decodeMetadata(fields) {
   const timed = version === '3';
   if ((!timed && version !== '2') || fields.length !== (timed ? 11 : 10) || !SIDES.includes(firstSide)) return null;
   const [versionToken, blueToken, redToken, idToken, timeoutToken] = fields.slice(6);
-  const boardVersions = timed ? ['1', '2', '3'] : ['1', '2'];
+  const boardVersions = timed ? ['1', '2', '3', '4'] : ['1', '2'];
   if (!boardVersions.includes(versionToken)) return null;
   if (idToken !== '' && !MATCH_ID.test(idToken)) return null;
   const timedOut = timeoutToken || null;
@@ -193,8 +189,10 @@ export function decodeTurn(hash) {
   }
   try {
     const metadata = decodeMetadata(fields);
-    if (!metadata || !supportsSettings(variant, difficulty, metadata.boardVersion)) return null;
-    const seed = decodeText(seedToken, MAX_SEED_BYTES);
+    if (!metadata || !supportsBoard(metadata.boardVersion, variant, difficulty)) return null;
+    const storedSeed = decodeText(seedToken, MAX_SEED_BYTES);
+    if (metadata.boardVersion === 4 && storedSeed?.length !== 6) return null;
+    const seed = metadata.boardVersion === 4 ? normalizeMapSeed(storedSeed) : storedSeed;
     if (seed === null) return null;
     const board = generateBoard(seed, variant, difficulty, metadata.boardVersion);
     if (indices.length > board.edges.length) return null;
