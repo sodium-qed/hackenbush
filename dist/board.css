@@ -1,9 +1,9 @@
 .hb-field {
   --hb-paper: #f7f7ed;
   --hb-joint: #304333;
-  --hb-green: #357b4a;
-  --hb-red: #ac5040;
-  --hb-blue: #376797;
+  --hb-green: #286243;
+  --hb-red: #ad493a;
+  --hb-blue: #305f90;
   --hb-stem: 5;
   --hb-target-stem: 5.7;
   --hb-halo: 14px;
@@ -22,6 +22,14 @@
   --hb-stem: 3.75;
   --hb-target-stem: 4.6;
   --hb-halo: 10px;
+}
+
+.hb-field__landscape {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  user-select: none;
 }
 
 .hb-field > svg {
@@ -43,11 +51,18 @@
 }
 
 .hb-field__ground,
+.hb-field__regions,
 .hb-field__joints,
 .hb-field__effects,
 .hb-field__scissors {
   pointer-events: none;
 }
+
+.hb-field__region { transition: opacity 120ms ease-out; }
+.hb-field__cut-wash { opacity: 0; }
+.hb-field__region--opening { opacity: .68; }
+.hb-field__region--opening .hb-field__cut-wash { opacity: .72; }
+.hb-field__region--falling { opacity: .42; }
 
 .hb-field__ground-line {
   fill: none;
@@ -79,11 +94,18 @@
 }
 
 .hb-field__halo,
+.hb-field__edge-keyline,
 .hb-field__stem,
 .hb-field__stripes {
   fill: none;
   stroke-linecap: round;
   pointer-events: none;
+}
+
+.hb-field__edge-keyline {
+  stroke: #fff7de;
+  stroke-width: calc((var(--hb-stem) + 1.9) * 1px);
+  opacity: .77;
 }
 
 .hb-field__stem {
@@ -125,7 +147,8 @@
   stroke-width: var(--hb-target-stem);
 }
 
-.hb-field__edge--falling .hb-field__stem {
+.hb-field__edge--falling .hb-field__stem,
+.hb-field__edge--falling .hb-field__edge-keyline {
   stroke-dasharray: 5 5;
   opacity: 0.39;
 }
@@ -184,17 +207,31 @@
 }
 
 .hb-field__snip,
+.hb-field__peel,
 .hb-field__fall {
   transform-box: fill-box;
   transform-origin: 50% 78%;
 }
+
+.hb-field__peel {
+  transform-origin: var(--hb-hinge, 50% 75%);
+  animation: hb-field-peel 460ms cubic-bezier(.28,.05,.69,.49) both;
+}
+
+.hb-field__peel--glass,
+.hb-field__peel--stone,
+.hb-field__peel--timber,
+.hb-field__peel--water,
+.hb-field__peel--earth,
+.hb-field__peel--trellis,
+.hb-field__peel--silk { animation-name: hb-field-release; }
 
 .hb-field__snip {
   animation: hb-field-snip 180ms ease-out both;
 }
 
 .hb-field__fall {
-  animation: hb-field-fall 410ms cubic-bezier(0.38, 0.02, 0.73, 0.5) both;
+  animation: hb-field-fall 510ms cubic-bezier(0.38, 0.02, 0.73, 0.5) both;
 }
 
 @keyframes hb-field-snip {
@@ -203,9 +240,20 @@
 }
 
 @keyframes hb-field-fall {
-  0% { opacity: 0.95; }
-  35% { opacity: 0.76; }
-  100% { opacity: 0; transform: translate(var(--hb-drift), 19px) rotate(var(--hb-spin)); }
+  0% { opacity: 1; }
+  32% { opacity: .96; }
+  100% { opacity: 0; transform: translate(var(--hb-drift), 42px) rotate(var(--hb-spin)); }
+}
+
+@keyframes hb-field-peel {
+  0% { opacity: 1; }
+  35% { opacity: .85; }
+  100% { opacity: 0; transform: translate(var(--hb-drift), 21px) rotate(var(--hb-spin)) scale(.63,.76); }
+}
+
+@keyframes hb-field-release {
+  0% { opacity: 1; }
+  100% { opacity: 0; transform: translate(var(--hb-drift), 12px) scale(.92); }
 }
 
 @media (pointer: coarse) {
@@ -213,6 +261,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .hb-field__region { transition: none; }
+  .hb-field__peel,
   .hb-field__fall,
   .hb-field__snip {
     animation: none;
@@ -222,6 +272,11 @@
 
 @media (forced-colors: active) {
   .hb-field { background: Canvas; }
+  .hb-field__regions,
+  .hb-field__landscape,
+  .hb-field__peel,
+  .hb-field__detached-region,
+  .hb-field__edge-keyline { display: none; }
   .hb-field__dot { fill: GrayText; }
   .hb-field__ground-line,
   .hb-field__etch,

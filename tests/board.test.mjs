@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createBoard } from '../dist/js/board.js';
 import { generateBoard } from '../dist/js/generator.js';
+import { practiceSunflower } from '../dist/js/practice.js';
 import { cutEdge } from '../dist/js/rules.js';
 
 // A small SVG event surface keeps the production-coordinate and keyboard
 // checks runnable with the same dependency-free Node test suite as the game.
-function surface(t) {
+function surface(t, reducedMotion = false) {
   const bounds = { left: 0, top: 0, width: 900, height: 340 };
   let resize;
   class Element {
@@ -26,7 +27,12 @@ function surface(t) {
     removeAttribute(key) { delete this.attrs[key]; }
     append(...children) { this.children.push(...children); for (const child of children) child.parent = this; }
     replaceChildren() { this.children = []; }
-    cloneNode() { const copy = new Element(this.tag); copy.attrs = { ...this.attrs }; return copy; }
+    cloneNode(deep = false) {
+      const copy = new Element(this.tag);
+      copy.attrs = { ...this.attrs };
+      if (deep) copy.append(...this.children.map(child => child.cloneNode(true)));
+      return copy;
+    }
     remove() { this.parent.children = this.parent.children.filter(child => child !== this); }
     descendants() { return [this, ...this.children.flatMap(child => child.descendants())]; }
     contains(element) { return this.descendants().includes(element); }
@@ -41,7 +47,7 @@ function surface(t) {
     }
   }
   globalThis.document = { createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag), activeElement: null };
-  globalThis.window = { setTimeout, clearTimeout, matchMedia: () => ({ matches: false }) };
+  globalThis.window = { setTimeout, clearTimeout, matchMedia: () => ({ matches: reducedMotion }) };
   globalThis.ResizeObserver = class { constructor(cb) { resize = cb; } observe() {} disconnect() {} };
   t.after(() => { delete globalThis.document; delete globalThis.window; delete globalThis.ResizeObserver; });
   return { root: new Element('div'), bounds, resize: () => resize() };
@@ -135,6 +141,78 @@ test('bowed edges retain distinct ink, picking, markers and motion through a pho
   }
 });
 
+test('a practice petal peels locally and an unsupported flower head falls with all its surviving pigment', t => {
+  let renderer;
+  t.after(() => renderer?.destroy());
+  const { root } = surface(t);
+  renderer = createBoard(root);
+  const board = practiceSunflower;
+  const opening = board.edges.map(edge => edge.id);
+  const render = (live, options) => renderer.update({ board, live, side: 'green', ...options });
+  const all = () => root.descendants();
+  const hasClass = (el, name) => el.attrs.class?.split(' ').includes(name);
+  const classed = name => all().filter(el => hasClass(el, name));
+  const visible = material => classed('hb-field__region').filter(el =>
+    el.attrs.display === 'inline' && el.attrs['data-material'] === material);
+  const branch = id => all().find(el => el.attrs['data-edge-id'] === id);
+  const petals = board.edges.filter(edge => edge.part === 'flower center').length;
+  render(opening);
+  const svg = all().find(el => el.tag === 'svg');
+  assert.deepEqual(svg.parent.children, [renderer.landscape, svg]);
+  assert.equal(renderer.landscape.attrs['aria-hidden'], 'true');
+  assert.equal(visible('petal').length, petals);
+  assert.equal(visible('seeds').length, 1);
+  assert.equal(visible('leaf').length, 2);
+  const target = board.edges.find(edge => edge.part === 'petal').id;
+  branch(target).focus();
+  assert.equal(classed('hb-field__region--opening').length, 1);
+  assert.ok(classed('hb-field__region--opening')[0].attrs['data-boundary'].split(' ').includes(target));
+  const cut = cutEdge(board, opening, target, 'green');
+  render(cut.live, { cutId: target, removed: cut.fallen });
+  assert.equal(visible('petal').length, petals - 1);
+  assert.equal(visible('seeds').length, 1);
+  assert.equal(classed('hb-field__peel')[0].attrs['data-material'], 'petal');
+  assert.equal(classed('hb-field__fall').length, 0);
+  render(cut.live, { reset: true });
+  assert.equal(classed('hb-field__peel').length, 0);
+
+  branch('stem').focus();
+  assert.equal(classed('hb-field__region--opening').length, 0);
+  assert.equal(classed('hb-field__region--falling').length, petals);
+  const drop = cutEdge(board, cut.live, 'stem', 'green');
+  render(drop.live, { cutId: 'stem', removed: drop.fallen });
+  assert.equal(visible('petal').length + visible('seeds').length, 0);
+  assert.equal(visible('leaf').length, 2);
+  const pieces = classed('hb-field__fall');
+  assert.equal(pieces.length, 1);
+  const fallen = pieces[0].descendants().filter(el => hasClass(el, 'hb-field__detached-region'));
+  assert.equal(fallen.filter(el => el.attrs['data-material'] === 'petal').length, petals - 1);
+  assert.equal(fallen.filter(el => el.attrs['data-material'] === 'seeds').length, 1);
+  assert.ok(fallen.every(el => el.descendants().some(child => hasClass(child, 'hb-field__pigment'))));
+  assert.equal(pieces[0].descendants().filter(el => hasClass(el, 'hb-field__stem')).length, drop.fallen.length);
+});
+
+test('a reopened game reconstructs a missing shared rim and reduced motion resolves the next cut immediately', t => {
+  let renderer;
+  t.after(() => renderer?.destroy());
+  const { root } = surface(t, true);
+  renderer = createBoard(root);
+  const board = structuredClone(practiceSunflower);
+  const opening = board.edges.map(edge => edge.id);
+  const rim = board.edges.find(edge => edge.part === 'flower center').id;
+  const cut = cutEdge(board, opening, rim, 'green');
+  renderer.update({ board, live: cut.live, side: 'green' });
+  const regions = () => root.descendants().filter(el => el.attrs['data-boundary']);
+  const absent = regions().filter(el => el.attrs.display === 'none');
+  assert.deepEqual(absent.map(el => el.attrs['data-material']).sort(), ['petal', 'seeds']);
+  assert.ok(absent.every(el => el.attrs['data-boundary'].split(' ').includes(rim)));
+  const drop = cutEdge(board, cut.live, 'stem', 'green');
+  renderer.update({ board, live: drop.live, side: 'green', cutId: 'stem', removed: drop.fallen });
+  assert.deepEqual(regions().filter(el => el.attrs.display === 'inline').map(el => el.attrs['data-material']), ['leaf', 'leaf']);
+  const effects = root.descendants().find(el => el.attrs.class === 'hb-field__effects');
+  assert.equal(effects.children.length, 0);
+});
+
 test('every branch in the Expert opening can be selected at its actual drawn midpoint', t => {
   const { root, bounds, resize } = surface(t);
   let selected = null;
@@ -161,6 +239,45 @@ test('every branch in the Expert opening can be selected at its actual drawn mid
           assert.equal(selected, branch.attrs['data-edge-id'], branch.attrs['aria-label']);
           selected = null;
         }
+      }
+    }
+  } finally {
+    renderer.destroy();
+  }
+});
+
+test('a narrow board applies the same projection to every segment of a painted petal and its playable boundary', t => {
+  const { root, bounds } = surface(t);
+  const board = generateBoard('FFFFFF', 'green', 'expert', 4);
+  bounds.width = 360;
+  bounds.height = 222;
+  const renderer = createBoard(root);
+  try {
+    renderer.update({ board, live: board.edges.map(edge => edge.id), side: 'green' });
+    const all = root.descendants();
+    const petals = all.filter(el => el.attrs['data-material'] === 'petal');
+    assert.ok(petals.length);
+    const coordinates = str => str.match(/-?[\d.]+/g).map(Number);
+    for (const petal of petals) {
+      const art = petal.children[0];
+      const [scale, , , , offset] = coordinates(art.attrs.transform);
+      assert.ok(scale > 0 && scale < 1);
+      const contourId = art.children[0].attrs.href.slice(1);
+      const path = all.find(el => el.attrs.id === contourId).attrs.d.match(/[MLQ][^MLQZ]+/g);
+      const projectPoint = ([x, y]) => [x * scale + offset, y];
+      let start = projectPoint(coordinates(path[0]));
+      for (const [i, id] of petal.attrs['data-boundary'].split(' ').entries()) {
+        const values = coordinates(path[i + 1]);
+        const end = projectPoint(values.slice(-2));
+        const edge = all.find(el => el.attrs['data-edge-id'] === id);
+        const ink = edge.children.find(el => el.attrs.class?.split(' ').includes('hb-field__stem')).attrs.d;
+        const branch = coordinates(ink);
+        const matches = (a, b) => a.every((v, j) => Math.abs(v - b[j]) < .000001);
+        const forward = matches(start, branch.slice(0, 2)) && matches(end, branch.slice(-2));
+        const reverse = matches(end, branch.slice(0, 2)) && matches(start, branch.slice(-2));
+        assert.ok(forward || reverse, id);
+        if (values.length === 4) assert.ok(matches(projectPoint(values.slice(0, 2)), branch.slice(2, 4)), id);
+        start = end;
       }
     }
   } finally {

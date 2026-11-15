@@ -130,13 +130,15 @@ function decodeGraph(board, alphabet) {
   return code;
 }
 
-test('the catalog assigns each of 16 digits one distinct rooted playable topology', () => {
+const legacyBoard = (seed, variant = 'green') => generateBoard(seed, variant, 'expert', 4);
+
+test('the generation 4 catalog assigns each of 16 digits one distinct rooted playable topology', () => {
   assert.equal(LANDMARKS.length, 16);
   assert.equal(new Set(LANDMARKS.map(item => item.id)).size, 16);
   assert.equal(new Set(LANDMARKS.map(item => item.name)).size, 16);
   const signatures = new Map();
   for (const digit of hex) {
-    const b = generateBoard(digit.repeat(6));
+    const b = legacyBoard(digit.repeat(6));
     const signature = sectorSignature(b, 0);
     assert.ok(!signatures.has(signature), digit + ' collides with ' + signatures.get(signature));
     signatures.set(signature, digit);
@@ -147,17 +149,17 @@ test('the catalog assigns each of 16 digits one distinct rooted playable topolog
   assert.equal(signatures.size ** 6, 16_777_216);
   for (let i = 0; i < 16; i++) {
     const code = Array.from({ length: 6 }, (_, slot) => hex[(i + 5 * slot) % 16]).join('');
-    const board = generateBoard(code);
+    const board = legacyBoard(code);
     assert.equal(decodeGraph(board, signatures), code);
   }
   for (const code of ['000000', 'FFFFFF', '000001', '100000', '012345', '543210', 'A35D7E', 'E7D53A']) {
-    assert.equal(decodeGraph(generateBoard(code), signatures), code);
+    assert.equal(decodeGraph(legacyBoard(code), signatures), code);
   }
 });
 
 test('V4 normalizes the code and preserves settings, artwork, and geometry in both palettes', () => {
   const code = 'A35D7E';
-  const green = generateBoard();
+  const green = legacyBoard();
   assert.deepEqual(generateBoard('  a35d7e ', 'green', 'expert', '4'), green);
   assert.equal(green.mapSeed, code);
   assert.equal(green.family, sceneForSeed(code).name);
@@ -165,11 +167,11 @@ test('V4 normalizes the code and preserves settings, artwork, and geometry in bo
   assert.equal(green.groundY, 314);
   assert.deepEqual(green.landmarks, landmarkIndices(code).map(i => LANDMARKS[i].name));
   for (const invalid of ['', '12345', '0000000', 'Z00000', 'GROVE7', '0xABCD', null, 123456]) {
-    assert.throws(() => generateBoard(invalid), RangeError);
+    assert.throws(() => legacyBoard(invalid), RangeError);
   }
   for (const digit of hex) {
     const seed = digit.repeat(6);
-    const a = generateBoard(seed), b = generateBoard(seed, 'redblue', 'expert', 4);
+    const a = legacyBoard(seed), b = generateBoard(seed, 'redblue', 'expert', 4);
     assert.ok(a.edges.every(e => e.color === 'green'));
     assert.deepEqual(b.nodes, a.nodes);
     assert.deepEqual(b.edges.map(e => ({ ...e, color: 'green' })), a.edges);

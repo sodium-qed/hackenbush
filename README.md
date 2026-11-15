@@ -19,24 +19,17 @@ Click or tap a branch. On a keyboard, tab to the board, use the arrow keys to se
 
 ## Play a map by seed
 
-Each of the six hexadecimal digits picks one playable landmark, in order from left to right. There are 16 choices in each slot, giving 16⁶ different ordered layouts. All six digits also shape the scenery and its framing. The 16 illustrated settings range from glacial fjords to moonlit estuaries.
+A six-character code selects one of **16,777,216** Expert landscapes. The generator mixes all six digits before it grows the board. Changing one digit can replace a sheltered canopy with an open wetland, move the roots, and change which branches share a second path to the ground.
 
-Try the [wildflower meadow A35D7E](https://sodium-qed.github.io/hackenbush/?seed=A35D7E), then change the final digit to visit the [lily pond A35D7F](https://sodium-qed.github.io/hackenbush/?seed=A35D7F). The last landmark changes from a saguaro cactus to a sunflower. Cutting through a cactus arm and opening a flower loop have different consequences.
+For comparison, [A35D7E](https://sodium-qed.github.io/hackenbush/?seed=A35D7E&v=5) opens a wildflower meadow and [A35D7F](https://sodium-qed.github.io/hackenbush/?seed=A35D7F&v=5) opens an alpine pass. Both the ground attachments and the network above them change.
 
-| Digit | Landmark | Digit | Landmark |
-| --- | --- | --- | --- |
-| 0 | Willow | 8 | Suspension bridge |
-| 1 | Bamboo | 9 | Windmill |
-| 2 | Fiddlehead fern | A | Glasshouse |
-| 3 | Mangrove | B | Stone aqueduct |
-| 4 | Waterwheel | C | Spiderweb |
-| 5 | Water lily | D | Mushroom colony |
-| 6 | Reed bed | E | Saguaro cactus |
-| 7 | Coral fan | F | Sunflower |
+Open **Map seed** before drawing seats, or leave it blank to draw a map. The random deal visits each code once per cycle on the same browser. **Rematch** draws fresh seats on the same board. Use **Seed** under a revealed board to share its layout. Turn links also carry the generator version and the moves already played. Toggle **Scenery** beneath the board to switch between the illustrated landscape and plain paper.
 
-Open **Map seed** during setup to enter a code, or leave it blank for a random map. **Rematch** deals new seats on the same map. During a match, select **Seed** beneath the board to share that layout with fresh players and clocks.
+## Practice, color, and sound
 
-After a cut, every branch that loses its path to the ground falls. Trace both colors through loops and shared supports before cutting. Open **How to play** to try a support cut or open one side of a petal.
+Try the sunflower in the untimed **Practice garden** before drawing seats. Open the edge of a petal to see its color peel away. Cut through its last support to see intact petals fall with the flower head. Red and blue ownership stays visible on the outlines. **How to play** lets you try a single support, two supports, and a petal loop.
+
+Open **Sound** in the top bar to adjust cut and end-of-match effects or turn on the garden ambience. The settings are remembered on this device.
 
 ## Play on two devices
 

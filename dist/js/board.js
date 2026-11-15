@@ -1,4 +1,5 @@
 import { cutEdge, legalMoves } from './rules.js';
+import { createRegionArt } from './region-art.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 const WIDTH = 900;
@@ -217,6 +218,9 @@ export function createBoard(container, { onCut } = {}) {
   const prefix = `hb-field-${++instanceNumber}`;
   const frame = document.createElement('div');
   frame.className = 'hb-field';
+  const landscape = document.createElement('div');
+  landscape.className = 'hb-field__landscape';
+  landscape.setAttribute('aria-hidden', 'true');
   const svg = svgElement('svg', {
     viewBox: `0 0 ${WIDTH} ${HEIGHT}`, role: 'group', tabindex: -1,
     'aria-label': 'Hackenbush board', 'aria-describedby': `${prefix}-instructions`
@@ -245,8 +249,9 @@ export function createBoard(container, { onCut } = {}) {
   const joints = svgElement('g', { class: 'hb-field__joints', 'aria-hidden': true });
   const effects = svgElement('g', { class: 'hb-field__effects', 'aria-hidden': true });
   const scissors = addScissors();
-  svg.append(desc, defs, grid, ground, branches, joints, effects, scissors);
-  frame.append(svg);
+  const art = createRegionArt(prefix, svgElement);
+  svg.append(desc, defs, art.defs, art.shapes, grid, ground, art.layer, effects, branches, joints, scissors);
+  frame.append(landscape, svg);
   container.append(frame);
 
   let board = null;
@@ -284,6 +289,7 @@ export function createBoard(container, { onCut } = {}) {
     edges.clear();
     hover = focused = roving = null;
     press = null;
+    art.build(next);
     for (const node of next.nodes) {
       const dot = svgElement('circle', { class: 'hb-field__joint' });
       joints.append(dot);
@@ -296,12 +302,13 @@ export function createBoard(container, { onCut } = {}) {
       });
       const hit = svgElement('path', { class: 'hb-field__hit' });
       const halo = svgElement('path', { class: 'hb-field__halo' });
+      const keyline = svgElement('path', { class: 'hb-field__edge-keyline' });
       const stem = svgElement('path', { class: 'hb-field__stem' });
       stem.classList.toggle('hb-field__stem--support', ['root', 'stem', 'trunk', 'trellis post'].includes(edge.part));
       const stripes = svgElement('path', { class: 'hb-field__stripes' });
-      group.append(hit, halo, stem, stripes);
+      group.append(hit, halo, keyline, stem, stripes);
       branches.append(group);
-      edges.set(edge.id, { ...edge, index, group, hit, halo, stem, stripes, center: null });
+      edges.set(edge.id, { ...edge, index, group, hit, halo, keyline, stem, stripes, center: null });
     }
     incident = incidence([...edges.values()]);
     spans = branchSpans([...edges.values()], nodes);
@@ -317,6 +324,7 @@ export function createBoard(container, { onCut } = {}) {
 
   function geometry() {
     const project = horizontalProjection(width, spans);
+    art.project(project);
     const margin = Math.min(17, width * 0.018);
     groundLine.setAttribute('d', `M${margin},${groundY}H${width - margin}`);
     hatching.setAttribute('patternTransform', `translate(0 ${groundY})`);
@@ -343,7 +351,7 @@ export function createBoard(container, { onCut } = {}) {
       const middle = parameterAtLength(edge.shape, edge.shape.length / 2);
       edge.center = pointAt(edge.shape, middle);
       const tangent = tangentAt(edge.shape, middle);
-      for (const part of [edge.hit, edge.halo, edge.stem]) part.setAttribute('d', edge.shape.path);
+      for (const part of [edge.hit, edge.halo, edge.keyline, edge.stem]) part.setAttribute('d', edge.shape.path);
       edge.stripes.setAttribute('d', crossbars(edge.shape, edge.color, dense ? 1.5 : 1.8));
       let angle = Math.atan2(tangent.y, tangent.x) * 180 / Math.PI;
       if (angle >= 90) angle -= 180;
@@ -358,6 +366,7 @@ export function createBoard(container, { onCut } = {}) {
     const move = edge && cutEdge(board, [...live], edge.id, side);
     const willFall = new Set(move?.fallen);
     const remaining = move ? new Set(move.live) : null;
+    art.preview(edge?.id, willFall);
     for (const [id, view] of edges) {
       view.group.classList.toggle('hb-field__edge--target', id === edge?.id);
       view.group.classList.toggle('hb-field__edge--falling', willFall.has(id));
@@ -395,6 +404,7 @@ export function createBoard(container, { onCut } = {}) {
     if (!cut && !fallen.length) return;
     const batch = svgElement('g');
     if (cut) {
+      batch.append(...art.opened(cut.id));
       const middle = cut.shape.length / 2;
       const gap = Math.min(2, middle * 0.16);
       const left = parameterAtLength(cut.shape, middle - gap);
@@ -410,18 +420,19 @@ export function createBoard(container, { onCut } = {}) {
     }
     for (const piece of components(fallen)) {
       const ghost = svgElement('g', { class: 'hb-field__fall' });
+      ghost.append(...art.detached(new Set(piece.map(edge => edge.id))));
       const ends = new Set();
       let center = 0;
       for (const edge of piece) {
         const copy = svgElement('g', { class: `hb-field--${edge.color}` });
-        copy.append(edge.stem.cloneNode(), edge.stripes.cloneNode());
+        copy.append(edge.keyline.cloneNode(), edge.stem.cloneNode(), edge.stripes.cloneNode());
         ghost.append(copy);
         ends.add(edge.a).add(edge.b);
         center += edge.center.x;
       }
       const direction = center / piece.length < (cut?.center.x ?? width / 2) ? -1 : 1;
-      ghost.style.setProperty('--hb-drift', `${direction * 5}px`);
-      ghost.style.setProperty('--hb-spin', `${direction * 4.5}deg`);
+      ghost.style.setProperty('--hb-drift', `${direction * 10}px`);
+      ghost.style.setProperty('--hb-spin', `${direction * 7}deg`);
       for (const id of ends) {
         const node = nodes.get(id);
         if (!node.ground && !incident.get(id).some(edge => live.has(edge.id))) {
@@ -436,7 +447,7 @@ export function createBoard(container, { onCut } = {}) {
     const timer = window.setTimeout(() => {
       batch.remove();
       timers.delete(timer);
-    }, 500);
+    }, 600);
     timers.add(timer);
   }
 
@@ -456,7 +467,7 @@ export function createBoard(container, { onCut } = {}) {
     const previousFocus = hadFocus ? edgeId(activeElement) : null;
     const nextSignature = JSON.stringify([next.height, next.groundY,
       next.nodes.map(n => [n.id, n.x, n.y, !!n.ground]),
-      next.edges.map(e => [e.id, e.a, e.b, e.color, e.control?.x, e.control?.y, e.part])]);
+      next.edges.map(e => [e.id, e.a, e.b, e.color, e.control?.x, e.control?.y, e.part, e.feature])]);
     const changed = nextSignature !== signature;
     const before = live;
     board = next;
@@ -485,6 +496,7 @@ export function createBoard(container, { onCut } = {}) {
       const vanished = [...before].filter(id => !live.has(id) && edges.has(id));
       animateRemoval(vanished, removed, cutId);
     }
+    art.setLive(live);
     for (const [id, view] of edges) {
       const visible = live.has(id);
       const enabled = available.has(id);
@@ -657,6 +669,7 @@ export function createBoard(container, { onCut } = {}) {
   geometry();
   fit();
   return {
+    landscape,
     update,
     destroy() {
       observer?.disconnect();

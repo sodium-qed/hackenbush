@@ -1,0 +1,96 @@
+#practice-garden {
+  min-width: 0;
+  overflow: hidden;
+  padding: 0;
+  color: var(--ink, #263b30);
+  background: var(--panel, #fffaf0);
+}
+
+.hb-practice__heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 17px clamp(16px, 1.65vw, 25px) 13px;
+}
+
+.hb-practice__heading h2 {
+  margin: 0;
+  font: 400 clamp(30px, 2.7vw, 39px)/1.05 var(--serif, "Instrument Serif", Georgia, serif);
+  letter-spacing: -.033em;
+}
+
+.hb-practice__regrow {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  gap: 5px;
+  min-height: 36px;
+  margin-right: -5px;
+  padding: 4px 5px;
+  color: var(--forest, #173e31);
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  font: 650 12px/1.2 var(--sans, "DM Sans", sans-serif);
+  cursor: pointer;
+}
+
+.hb-practice__regrow svg {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.7;
+}
+
+.hb-practice__regrow:enabled:hover { background: #eae8d8; }
+.hb-practice__regrow:disabled { color: #777962; cursor: default; }
+.hb-practice__regrow:focus-visible { outline: 2px solid var(--forest, #173e31); outline-offset: 2px; }
+
+.hb-practice__bed {
+  position: relative;
+  overflow: hidden;
+  border-block: 1px solid var(--line, #c9c2aa);
+}
+
+.hb-practice__bed .hb-field {
+  --hb-paper: #f7f1df;
+  --hb-green: #4e623d;
+  --hb-joint: #4b5132;
+  --hb-stem: 2.5;
+  --hb-target-stem: 3.7;
+  --hb-halo: 10px;
+  min-height: 0;
+  height: clamp(169px, 15vw, 216px);
+  aspect-ratio: auto;
+  background: radial-gradient(ellipse at 45% 35%, #fff8e5, #f3eddb 78%);
+}
+
+.hb-practice__bed .hb-field__dot { opacity: .20; }
+.hb-practice__bed .hb-field__joint { r: 2.05px; }
+.hb-practice__bed .hb-field__joint--root { r: 3px; }
+.hb-practice__bed .hb-field__joint--target { r: 2.75px; }
+.hb-practice__bed .hb-field__ground-line { stroke: #746c4d; }
+.hb-practice__bed .hb-field__etch { stroke: #928365; }
+
+.hb-practice__note {
+  margin: 0;
+  min-height: 3.8em;
+  padding: 12px clamp(16px, 1.65vw, 25px) 14px;
+  color: #475446;
+  font: 400 14px/1.45 var(--sans, "DM Sans", sans-serif);
+}
+
+@media (max-width: 50rem) {
+  .hb-practice__bed .hb-field { height: 192px; }
+}
+
+@media (forced-colors: active) {
+  .hb-practice__bed .hb-field { background: Canvas; }
+  .hb-practice__bed .hb-field__ground-line, .hb-practice__bed .hb-field__etch { stroke: CanvasText; }
+  .hb-practice__regrow:disabled { color: GrayText; }
+}

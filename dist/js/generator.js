@@ -1,5 +1,7 @@
 import { botanicalGarden } from './garden-layouts.js';
 import { composeMap } from './map-catalog.js';
+import { CURRENT_BOARD_VERSION } from './map-seed.js';
+import { generateWorld } from './world-generator.js';
 
 const GROUND_Y = 244;
 const LEFT = 35;
@@ -544,7 +546,14 @@ function networkForSeed(label, size) {
   return growNetwork(reserve, size);
 }
 
-export function generateBoard(seed, variant = 'green', difficulty = 'expert', boardVersion = 4) {
+export function generateBoard(seed, variant = 'green', difficulty = 'expert', boardVersion = CURRENT_BOARD_VERSION) {
+  if (boardVersion === 5 || boardVersion === '5') {
+    const code = seed === undefined ? 'A35D7E' : seed;
+    const { roots, loads, ...board } = generateWorld(code);
+    const colors = variant === 'redblue' ? 'redblue' : 'green';
+    colorNetwork({ edges: board.edges, roots, loads }, randomSource(JSON.stringify([5, board.mapSeed, colors])), colors);
+    return board;
+  }
   if (boardVersion === 4 || boardVersion === '4') {
     const map = composeMap(seed === undefined ? 'A35D7E' : seed, randomSource);
     const colors = variant === 'redblue' ? 'redblue' : 'green';

@@ -16,7 +16,7 @@ const namedPlayers = {
 
 function play(settings, limit = Infinity) {
   const firstSide = settings.firstSide ?? 'blue';
-  const boardVersion = settings.boardVersion ?? 4;
+  const boardVersion = settings.boardVersion ?? 5;
   const timed = settings.timed ?? boardVersion >= 3;
   const players = settings.players ?? {
     [firstSide]: { name: 'Player 1', kind: 'human' },
@@ -52,13 +52,13 @@ function replaceField(hash, index, value) {
 }
 
 test('both opening sides can exchange an invitation and two cuts in all new and historical modes', () => {
-  for (const boardVersion of [1, 2, 3, 4]) {
+  for (const boardVersion of [1, 2, 3, 4, 5]) {
     const variants = boardVersion >= 3 ? ['green', 'redblue'] : ['green', 'redblue', 'mixed'];
     const sizes = boardVersion >= 3 ? ['expert'] : ['small', 'standard', 'large'];
     for (const variant of variants) {
       for (const difficulty of sizes) {
         for (const firstSide of ['blue', 'red']) {
-          const settings = { seed: boardVersion === 4 ? '00000F' : 'Grove #4/🪵.é', boardVersion, variant, difficulty, firstSide,
+          const settings = { seed: boardVersion >= 4 ? '00000F' : 'Grove #4/🪵.é', boardVersion, variant, difficulty, firstSide,
             players: namedPlayers, matchId: 'invitation_2-z' };
           for (const count of [0, 1, 2]) {
             const expected = play(settings, count);
@@ -147,29 +147,39 @@ test('historical Expert links retain their exact seed, cuts, bytes, and generato
   assert.equal(decodeTurn(replaceField(oldExpertHash, 6, '4')), null);
 });
 
+test('a published sunflower catalog link replays the original board after the generator upgrade', () => {
+  const hash = '#turn=3.blue.redblue.expert.QTM1RDdG.r-5-21.4.Um9iaW4.Um93YW4.catalog-sunflower..b124c770';
+  const match = decodeTurn(hash);
+  assert.equal(match.boardVersion, 4);
+  assert.equal(match.board.landmarks.at(-1), 'Sunflower');
+  assert.deepEqual(match.moves, ['e27', 'e5', 'e73']);
+  assert.equal(match.live.length, 96);
+  assert.equal(encodeTurn(match), hash);
+});
+
 test('generation 4 canonicalizes six hex digits and keeps wire version 3', () => {
   for (const seed of ['000000', '00000f', '0abc0d', 'ffffff']) {
-    const hash = encodeTurn({ seed, moves: [] });
+    const hash = encodeTurn({ boardVersion: 4, seed, moves: [] });
     const state = decodeTurn(hash);
     assert.equal(state.seed, seed.toUpperCase());
     assert.equal(state.boardVersion, 4);
     assert.equal(state.wireVersion, 3);
     assert.equal(state.timed, true);
-    assert.equal(hash, encodeTurn({ seed: seed.toUpperCase(), moves: [] }));
+    assert.equal(hash, encodeTurn({ boardVersion: 4, seed: seed.toUpperCase(), moves: [] }));
     const lower = replaceField(hash, 4, Buffer.from(seed.toLowerCase()).toString('base64url'));
     assert.deepEqual(decodeTurn(lower), state);
     assert.equal(encodeTurn(decodeTurn(lower)), hash);
   }
-  const valid = encodeTurn({ seed: '012ABC', moves: [] });
+  const valid = encodeTurn({ boardVersion: 4, seed: '012ABC', moves: [] });
   for (const raw of ['', '12345', '0000000', '0x0123', '12345G', 'ﬀ0000', '１２３ＡＢＣ', 'old 🌿 seed']) {
-    assert.throws(() => encodeTurn({ seed: raw, moves: [] }));
+    assert.throws(() => encodeTurn({ boardVersion: 4, seed: raw, moves: [] }));
     assert.equal(decodeTurn(replaceField(valid, 4, Buffer.from(raw).toString('base64url'))), null);
   }
   assert.equal(decodeTurn(replaceField(versionTwoHash, 6, '4')), null);
 });
 
 test('a timed-out side loses on every timed generator without adding a cut or transmitting a deadline', () => {
-  for (const boardVersion of [1, 2, 3, 4]) {
+  for (const boardVersion of [1, 2, 3, 4, 5]) {
     const difficulty = boardVersion >= 3 ? 'expert' : 'standard';
     for (const firstSide of ['blue', 'red']) {
       for (const count of [0, 1, 2]) {
@@ -279,7 +289,7 @@ test('two devices keep their seats whether the organizer moves first or sends th
 
 test('bare encodes use the latest generator, and names and optional match ID survive round trips', () => {
   const basic = decodeTurn(encodeTurn({ ...options, moves: [] }));
-  assert.equal(basic.boardVersion, 4);
+  assert.equal(basic.boardVersion, 5);
   assert.equal(basic.timed, true);
   assert.equal(basic.timedOut, null);
   assert.deepEqual(decodeTurn(encodeTurn({ seed: options.seed, moves: [] })), basic);
@@ -383,7 +393,7 @@ test('corruption, forged metadata, ambiguous representations and malformed seed 
     replaceField(hash, 2, 'purple'), replaceField(hash, 2, 'mixed'), replaceField(hash, 3, 'huge'), replaceField(hash, 3, 'standard'),
     replaceField(hash, 4, '/w=='), replaceField(hash, 4, '_w'), replaceField(hash, 4, 'YR'),
     replaceField(hash, 4, 'a'), replaceField(hash, 4, excessiveSeed),
-    replaceField(hash, 6, '01'), replaceField(hash, 6, '5'), replaceField(hash, 9, 'a'.repeat(65)),
+    replaceField(hash, 6, '01'), replaceField(hash, 6, '6'), replaceField(hash, 9, 'a'.repeat(65)),
     replaceField(hash, 9, 'bad/id'), replaceField(hash, 9, '?'), replaceField(hash, 7, '_w'),
     ...['', ' Alice', 'Bob\u202e', 'Player\nName', 'A'.repeat(25), '🌿'.repeat(25)].map(name => replaceField(hash, 8, nameToken(name))),
     ...['0-', '-0', '00', '1--2', 'Z', 'zzzzzzz', '1.0', '@', excessiveCuts]

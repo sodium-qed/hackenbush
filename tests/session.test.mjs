@@ -14,8 +14,8 @@ function move(game, choice = 0, now = Date.now()) {
 }
 
 test('two people on separate devices complete a match, including refreshes and the final link', () => {
-  for (const [boardVersion, variant] of [[4, 'green'], [4, 'redblue'], [3, 'green'], [3, 'redblue'], [2, 'mixed']]) {
-    let host = createGame({ seed: boardVersion === 4 ? '00C0DE' : 'GROVE7', variant, boardVersion, opponent: 'link' });
+  for (const [boardVersion, variant] of [[5, 'green'], [5, 'redblue'], [4, 'green'], [4, 'redblue'], [3, 'green'], [3, 'redblue'], [2, 'mixed']]) {
+    let host = createGame({ seed: boardVersion >= 4 ? '00C0DE' : 'GROVE7', variant, boardVersion, opponent: 'link' });
     let guest = null;
     let active = host;
     while (!active.victor) {
@@ -227,7 +227,7 @@ test('new games are timed Expert matches with independent identities; older form
   for (const opponent of ['local', 'computer', 'link']) {
     const config = { seed: 'A07C42', opponent };
     const game = createGame(config);
-    assert.equal(game.boardVersion, 4);
+    assert.equal(game.boardVersion, 5);
     assert.equal(game.difficulty, 'expert');
     assert.equal(game.timed, true);
     assert.equal(game.deadline, null);
@@ -272,7 +272,7 @@ test('restoring a saved generation 3 Expert match reproduces its graph, moves, a
 test('a hex map survives two seats, a midgame reload, and a shared timeout', () => {
   const host = createGame({ seed: '0000af', variant: 'redblue', opponent: 'link', seat: 'red', firstSide: 'red', matchId: 'hex-table' });
   assert.equal(host.seed, '0000AF');
-  assert.equal(host.boardVersion, 4);
+  assert.equal(host.boardVersion, 5);
   const first = move(host, -1, 10_000);
   const guest = receiveLink(decodeTurn(encodeTurn(first)), null, 100_000).game;
   assert.deepEqual(guest.board, host.board);
@@ -290,7 +290,7 @@ test('a hex map survives two seats, a midgame reload, and a shared timeout', () 
   const expired = restoreGame(saved, 210_000);
   const final = decodeTurn(encodeTurn(expired));
   assert.equal(final.wireVersion, 3);
-  assert.equal(final.boardVersion, 4);
+  assert.equal(final.boardVersion, 5);
   assert.equal(final.seed, '0000AF');
   assert.equal(final.timedOut, 'red');
   assert.equal(final.winner, 'blue');
