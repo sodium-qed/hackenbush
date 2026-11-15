@@ -1,8 +1,15 @@
 import { BOT_CALIBRATION, CALIBRATION_VERSION } from './bot-calibration.js';
+import { RATED_BOT_BY_ID } from './rated-bots.js';
 
-export const SKILL_MODEL = 'opening-conditioned-1';
-export const INITIAL_RATING = 1000;
+export const SKILL_MODEL = 'full-garden-prior-1';
+export const INITIAL_RATING = 1200;
 export const INITIAL_RD = 200;
+// Historical fits and v1/v2 ledgers used 1000 as their origin. Translating
+// every absolute rating by the same amount leaves odds and evidence intact.
+export const LEGACY_RATING_SHIFT = INITIAL_RATING - 1000;
+const NAMED_PRIOR_VERSION = 'chess-com-prior-1';
+const NAMED_BOT_SD = 200;
+const PROVEN_SEAT_ADVANTAGE = 80;
 const LOG_ODDS_PER_POINT = Math.LN10 / 400;
 const DRIFT_PER_GAME = 12;
 
@@ -25,10 +32,17 @@ export function isProvisional(ratedGames, rd) {
 }
 
 export function ratedBotSummary(variant, level) {
-  const fit = BOT_CALIBRATION[variant]?.bots?.[level];
+  if (!Object.hasOwn(BOT_CALIBRATION, variant)) return null;
+  if (Object.hasOwn(RATED_BOT_BY_ID, level)) {
+    const { elo } = RATED_BOT_BY_ID[level];
+    return { level, rating: elo, sd: NAMED_BOT_SD, modelRating: elo, modelSd: NAMED_BOT_SD,
+      provisional: true, sourceKind: 'assigned-prior', calibration: NAMED_PRIOR_VERSION };
+  }
+  const fit = BOT_CALIBRATION[variant].bots[level];
   if (!fit || !Number.isFinite(fit.rating)) return null;
-  return { level, rating: fit.rating, sd: fit.sd, modelRating: fit.modelRating, modelSd: fit.modelSd, provisional: Boolean(fit.provisional),
-    calibration: CALIBRATION_VERSION };
+  return { level, rating: fit.rating + LEGACY_RATING_SHIFT, sd: fit.sd,
+    modelRating: fit.modelRating + LEGACY_RATING_SHIFT, modelSd: fit.modelSd,
+    provisional: Boolean(fit.provisional), sourceKind: 'legacy-fit', calibration: CALIBRATION_VERSION };
 }
 
 // Conditional logistic probability on an Elo-sized unit. Compute both tails
@@ -70,23 +84,35 @@ export function skillForecast(pool, offset, nuisanceSd) {
   return { expected: win[0] / (win[0] + loss[0]), win: posterior(win), loss: posterior(loss) };
 }
 
-/** Freeze the forecast before the first cut, including the consequences of
- * either result. Runtime-only measurements never enter the rating update. */
-export function forecastOpening(pool, game, opening) {
-  const level = game.players[game.seat === 'blue' ? 'red' : 'blue'].level;
+function openingParameters(game, opening, bot) {
+  const favored = opening.winner == null ? 0 : opening.winner === game.seat ? 1 : -1;
+  if (bot.sourceKind === 'assigned-prior') {
+    // The roster's nominal Elo, its uncertainty, and the practical size of
+    // a proven seat advantage are design priors for full Hackenbush gardens.
+    // An unproved opening contributes no directional advantage.
+    return { offset: -bot.modelRating + favored * PROVEN_SEAT_ADVANTAGE, sd: bot.modelSd, model: SKILL_MODEL };
+  }
   const fit = BOT_CALIBRATION[game.variant];
-  const favored = opening.winner === game.seat ? 1 : -1;
   const first = game.firstSide === game.seat ? 1 : -1;
-  const x = [-Number(level === 'easy'), -Number(level === 'expert'), favored, first];
+  const x = [-Number(bot.level === 'easy'), -Number(bot.level === 'expert'), favored, first];
   let calibrationVariance = 0;
   for (let i = 0; i < x.length; i++) {
     for (let j = 0; j < x.length; j++) calibrationVariance += x[i] * fit.covariance[i][j] * x[j];
   }
+  return { offset: -bot.modelRating + favored * fit.opening.favored + first * fit.opening.first,
+    sd: Math.sqrt(Math.max(0, calibrationVariance)), model: 'opening-conditioned-1' };
+}
+
+/** Freeze the forecast before the first cut, including the consequences of
+ * either result. Runtime-only measurements never enter the rating update. */
+export function forecastOpening(pool, game, opening) {
+  const level = game.players[game.seat === 'blue' ? 'red' : 'blue'].level;
+  const bot = ratedBotSummary(game.variant, level);
+  const { offset, sd, model } = openingParameters(game, opening, bot);
   // A declared, symmetric transfer allowance for board-specific variation in
   // human play, in Elo units. Neither difficulty nor solver speed earns points.
   const transferSd = 0.5 * opening.score + 0.75 * (opening.upper - opening.lower);
-  const nuisanceSd = Math.hypot(Math.sqrt(Math.max(0, calibrationVariance)), transferSd);
-  const offset = -fit.bots[level].modelRating + favored * fit.opening.favored + first * fit.opening.first;
+  const nuisanceSd = Math.hypot(sd, transferSd);
   const forecast = skillForecast(pool, offset, nuisanceSd);
   const rated = opening.information === 'skill';
   if (!rated) {
@@ -94,6 +120,5 @@ export function forecastOpening(pool, game, opening) {
     forecast.loss = { ...forecast.win };
     if (opening.forcedWinner) forecast.expected = Number(opening.forcedWinner === game.seat);
   }
-  return { ...forecast, rated, offset, nuisanceSd, transferSd,
-    model: SKILL_MODEL, calibration: CALIBRATION_VERSION };
+  return { ...forecast, rated, offset, nuisanceSd, transferSd, model, calibration: bot.calibration };
 }

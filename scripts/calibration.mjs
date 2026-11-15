@@ -3,7 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { generateBoard } from '../dist/js/generator.js';
 import { permuteMapNumber } from '../dist/js/map-seed.js';
-import { ratedBotMove, ratedDeal, ratedOpeningWinner } from '../dist/js/rated-deal.js';
+import { legacyRatedDeal as ratedDeal, ratedBotMove, ratedOpeningWinner } from '../dist/js/rated-deal.js';
 import { assessOutcomeChoice } from '../dist/js/rating-opening.js';
 import { cutEdge, initialEdges, otherSide } from '../dist/js/rules.js';
 import { prepareGraph, inspectGraph } from '../dist/js/strategy.js';

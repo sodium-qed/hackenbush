@@ -11,6 +11,7 @@ node scripts/benchmark-analyzer.mjs --budget-ms=220 --repetitions=3 --json
 node scripts/difficulty-study.mjs
 node scripts/calibration.mjs --check
 node scripts/validate-ratings.mjs
+node scripts/full-garden-study.mjs
 npm test
 ```
 
@@ -75,8 +76,12 @@ The 11-edge cyclic fixture has 5 Blue edges and 6 Red edges. Give the **same** s
 
 The two readings at 117 and 245 show further computation with no stronger certificate. By 501 the excluded upper endpoint at zero proves Red wins, although the lower endpoint −1/2 could still be the value. At 938 the search establishes that it is. The full tree oracle returns −1/2 and Red for either starting seat.
 
-## Position difficulty and bot calibration
+## Full-garden rated play
+
+The session tests compare complete board objects across seeds, variants, named opponents and resumed games. Browser checks exercise this through the ordinary map form, a rated deal and the shared practice link. Green `48094F` opens with 123 branches and Red–Blue `90129F` with 133. Their rendered edge identifiers, ownership and paths agree across all three entry points, including the cut of `e100` on the Green board. Paired games compare opponent strength separately for each ruleset. [Full-garden results](BOT_CALIBRATION.md)
+
+## Position difficulty and historical bot calibration
 
 * The six-edge study evaluated six topologies, every two-color assignment and both starters. The 768 full cut censuses matched the independent minimax counts. A four-node, two-physical-cut survey enclosed the completed index in all 768 cases, and 550 intervals were already singletons. Two colorings of the same three-stalk topology offered Blue three legal cuts each. One winning cut out of three scored 68, while three winning cuts out of three scored 5. Across the 328 winning seats the score's rank correlation with dyadic denominator exponent was 0.035 and with root proof effort was 0.482. These are descriptive associations for the constructed corpus. No human decisions or response times were observed. [Design, sensitivity experiments and generated-map results](DIFFICULTY_MODEL.md)
-* The calibration experiment replayed 73,728 bot games over 4,096 seeds. Held-out boards were kept together across seat assignments. In finite-coefficient test cases, incorporating opening information reduced Brier score from 0.15644 to 0.15183 on Green and from 0.21677 to 0.18359 on Red–Blue. The calibrated population is the shipped untimed bot garden bank, with 6–22 edges. Human rating accuracy and transfer to other graph families remain open. [Calibration design, fitted ladder, uncertainty and held-out results](BOT_CALIBRATION.md) · [Player rating model](RATING_MODEL.md)
+* The calibration experiment replayed 73,728 bot games over 4,096 seeds. Held-out boards were kept together across seat assignments. In finite-coefficient test cases, incorporating opening information reduced Brier score from 0.15644 to 0.15183 on Green and from 0.21677 to 0.18359 on Red–Blue. This calibration covers the original version 1 gardens with 6–22 edges. The named opponents on full gardens have their own paired evaluation. Human rating accuracy and transfer to other graph families remain open. [Calibration design, fitted ladder, uncertainty and held-out results](BOT_CALIBRATION.md) · [Player rating model](RATING_MODEL.md)
 * The player filter was separately checked against independent two-dimensional integration. In the model-based simulation, 512 stationary synthetic players at each of three skills completed 80 informative games. Mean final errors were −1.99, −0.59 and +1.88 points at true skills 800, 1000 and 1200. These results test recovery when the opening-generation and response assumptions hold. The fresh-garden Standard-policy experiment also measures misspecification outside those simulated response assumptions. [Player-filter validation and limitations](RATING_MODEL.md)

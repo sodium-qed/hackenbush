@@ -1,34 +1,51 @@
 import { MAP_COUNT, normalizeMapSeed, permuteMapNumber } from './map-seed.js';
-import { chooseComputerMove } from './opponents.js?v=9';
+import { chooseComputerMove } from './opponents.js?v=10';
+import { RATED_BOT_BY_ID, chooseRatedBotMove } from './rated-bots.js?v=10';
 import { otherSide } from './rules.js';
 
+export const RATED_BOARD_VERSION = 5;
 const sizes = ['small', 'standard', 'large'];
 
-function seedWord(seed) {
+function checkedSeed(seed) {
   const normalized = normalizeMapSeed(seed);
   if (!normalized) throw new RangeError('A rated deal needs a six-digit hexadecimal seed.');
-  return Number.parseInt(normalized, 16);
+  return normalized;
 }
 
-/** Deal specification shared by the browser and calibration. Two distinct
- * bits select the seats. The remaining 22 bits select the size stratum. */
-export function ratedDeal(seed) {
-  const word = permuteMapNumber(seedWord(seed) ^ 0x678f31);
-  return {
-    seed: normalizeMapSeed(seed), boardVersion: 1,
-    difficulty: sizes[Math.floor((word >>> 2) * 3 / (MAP_COUNT / 4))],
+/** The map code goes directly to the ordinary map generator. Two independent
+ * bits in a separate permutation assign the opening side and the human seat. */
+export function ratedDeal(seed, boardVersion = RATED_BOARD_VERSION) {
+  const code = checkedSeed(seed);
+  const word = permuteMapNumber(Number.parseInt(code, 16) ^ 0x678f31);
+  const seats = {
     firstSide: word & 1 ? 'red' : 'blue',
     seat: word & 2 ? 'red' : 'blue',
   };
+  if (boardVersion === 1) {
+    const difficulty = sizes[Math.floor((word >>> 2) * 3 / (MAP_COUNT / 4))];
+    return { seed: code, boardVersion, difficulty, ...seats };
+  }
+  if (boardVersion !== RATED_BOARD_VERSION) throw new RangeError('Unknown rated board version.');
+  return { seed: code, boardVersion, difficulty: 'expert', ...seats, timed: false };
 }
 
-/** The production opponents with reproducible Easy draws and a bounded,
- * clock-independent completion of Expert's existing small-component solver. */
+/** Frozen miniature deals for existing matches and their original calibration. */
+export function legacyRatedDeal(seed) {
+  return ratedDeal(seed, 1);
+}
+
+export function isRatedBot(level) {
+  return typeof level === 'string' && Object.hasOwn(RATED_BOT_BY_ID, level);
+}
+
+/** Both play and replay choose the policy recorded with the computer's seat. */
 export function ratedBotMove(board, live, side, level, seed, ply) {
+  if (isRatedBot(level)) return chooseRatedBotMove(board, live, side, level, seed, ply);
+  // The archived Easy stream and Expert proof contract remain reproducible.
   if (level === 'easy') {
     if (!Number.isInteger(ply) || ply < 0 || ply > 22) throw new RangeError('Invalid rated ply.');
     const stream = permuteMapNumber(0x42c79d + 2 * ply + Number(side === 'red'));
-    const draw = permuteMapNumber(seedWord(seed) ^ stream) / MAP_COUNT;
+    const draw = permuteMapNumber(Number.parseInt(checkedSeed(seed), 16) ^ stream) / MAP_COUNT;
     return chooseComputerMove(board, live, side, level, { random: () => draw });
   }
   const move = chooseComputerMove(board, live, side, level, { completeSmallComponents: true });

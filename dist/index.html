@@ -4,20 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f6f2e8">
-  <meta name="description" content="Play rated Hackenbush against calibrated bots, try the daily puzzle, or grow a Green or Red–Blue garden. Explore the value and difficulty of each position after a match.">
+  <meta name="description" content="Play rated Hackenbush on full seeded gardens against named bots, try the daily puzzle, or practice a Green or Red–Blue map. Explore the value and difficulty of each position after a match.">
   <title>Hackenbush · Groundwork</title>
-  <link rel="icon" href="./favicon.svg?v=9" type="image/svg+xml">
+  <link rel="icon" href="./favicon.svg?v=10" type="image/svg+xml">
   <link rel="preload" href="./fonts/instrument-serif.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./style.css?v=9">
-  <link rel="stylesheet" href="./board.css?v=9">
-  <link rel="stylesheet" href="./guide.css?v=9">
-  <link rel="stylesheet" href="./players.css?v=9">
-  <link rel="stylesheet" href="./landscape.css?v=9">
-  <link rel="stylesheet" href="./practice.css?v=9">
-  <link rel="stylesheet" href="./audio.css?v=9">
-  <link rel="stylesheet" href="./builder.css?v=9">
-  <link rel="stylesheet" href="./analyzer.css?v=9">
-  <link rel="stylesheet" href="./rated.css?v=9">
+  <link rel="stylesheet" href="./style.css?v=10">
+  <link rel="stylesheet" href="./board.css?v=10">
+  <link rel="stylesheet" href="./guide.css?v=10">
+  <link rel="stylesheet" href="./players.css?v=10">
+  <link rel="stylesheet" href="./landscape.css?v=10">
+  <link rel="stylesheet" href="./practice.css?v=10">
+  <link rel="stylesheet" href="./audio.css?v=10">
+  <link rel="stylesheet" href="./builder.css?v=10">
+  <link rel="stylesheet" href="./analyzer.css?v=10">
+  <link rel="stylesheet" href="./rated.css?v=10">
 </head>
 <body data-phase="ready">
   <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -189,7 +189,7 @@
       <aside class="side-column" aria-label="Practice and match details">
         <section class="panel rated-card" id="rated-card" aria-labelledby="rated-card-title">
           <div class="rated-card__heading"><h2 id="rated-card-title">Rated play</h2><svg class="icon" aria-hidden="true"><use href="#i-seed"/></svg></div>
-          <p>Play an untimed match against a calibrated bot. Each ruleset has its own rating.</p>
+          <p>Choose a bot by its Chess.com Elo and play an untimed match on a full garden. Green and Red–Blue each start at 1200.</p>
           <button id="open-rated" class="secondary" type="button" aria-haspopup="dialog">View ratings &amp; play<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
         </section>
         <section id="practice-garden" class="panel"></section>
@@ -205,13 +205,14 @@
           <p id="turn-help">Each player gets ten seconds to make a cut.</p>
           <p class="turn-action" id="turn-action" hidden></p>
           <button type="button" class="turn-share analyze-game" id="analyze-game" aria-haspopup="dialog" hidden><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>Analyze game</button>
+          <button id="rated-retry" class="turn-share" type="button" hidden>Retry bot move</button>
           <button type="button" class="turn-share" id="share-turn" hidden><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Share turn link</span></button>
         </section>
         <section class="panel rated-card rated-receipt" id="rated-receipt" aria-labelledby="rated-receipt-title" hidden>
           <div class="rated-card__heading"><h2 id="rated-receipt-title">Rated match</h2><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg></div>
-          <p id="rated-match-rating"></p><p id="rated-match-odds"></p><p id="rated-match-difficulty"></p>
+          <p id="rated-match-rating"></p><p id="rated-match-opponent" hidden></p><p id="rated-match-odds"></p><p id="rated-match-difficulty"></p>
+          <button id="rated-practice" class="secondary" type="button" hidden>Practice this garden</button>
           <button id="match-ratings" class="secondary" type="button" aria-haspopup="dialog">Rating history<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
-          <button id="rated-retry" class="secondary" type="button" hidden>Retry bot move</button>
         </section>
         <section class="panel setup-panel" aria-labelledby="setup-title">
           <div class="section-top"><h2 id="setup-title">Players</h2><svg class="icon section-icon" aria-hidden="true"><use href="#i-people"/></svg></div>
@@ -237,56 +238,57 @@
   <script type="importmap">
     {
       "imports": {
-        "./js/analysis-dyadics.js": "./js/analysis-dyadics.js?v=9",
-        "./js/analysis-modes.js": "./js/analysis-modes.js?v=9",
-        "./js/analysis-reductions.js": "./js/analysis-reductions.js?v=9",
-        "./js/analysis-symmetry.js": "./js/analysis-symmetry.js?v=9",
-        "./js/analysis-values.js": "./js/analysis-values.js?v=9",
-        "./js/analysis-worker.js": "./js/analysis-worker.js?v=9",
-        "./js/analyzer.js": "./js/analyzer.js?v=9",
-        "./js/audio.js": "./js/audio.js?v=9",
-        "./js/board.js": "./js/board.js?v=9",
-        "./js/bot-calibration.js": "./js/bot-calibration.js?v=9",
-        "./js/builder.js": "./js/builder.js?v=9",
-        "./js/custom-board.js": "./js/custom-board.js?v=9",
-        "./js/daily-progress.js": "./js/daily-progress.js?v=9",
-        "./js/daily.js": "./js/daily.js?v=9",
-        "./js/difficulty.js": "./js/difficulty.js?v=9",
-        "./js/draw.js": "./js/draw.js?v=9",
-        "./js/garden-layouts.js": "./js/garden-layouts.js?v=9",
-        "./js/generator.js": "./js/generator.js?v=9",
-        "./js/guide-lessons.js": "./js/guide-lessons.js?v=9",
-        "./js/guide.js": "./js/guide.js?v=9",
-        "./js/landscape.js": "./js/landscape.js?v=9",
-        "./js/linkplay.js": "./js/linkplay.js?v=9",
-        "./js/map-catalog.js": "./js/map-catalog.js?v=9",
-        "./js/map-seed.js": "./js/map-seed.js?v=9",
-        "./js/maps/habitats.js": "./js/maps/habitats.js?v=9",
-        "./js/maps/structures.js": "./js/maps/structures.js?v=9",
-        "./js/maps/water.js": "./js/maps/water.js?v=9",
-        "./js/maps/woodland.js": "./js/maps/woodland.js?v=9",
-        "./js/opponents.js": "./js/opponents.js?v=9",
-        "./js/players.js": "./js/players.js?v=9",
-        "./js/practice.js": "./js/practice.js?v=9",
-        "./js/preview.js": "./js/preview.js?v=9",
-        "./js/rated-deal.js": "./js/rated-deal.js?v=9",
-        "./js/rated-ui.js": "./js/rated-ui.js?v=9",
-        "./js/rated-worker.js": "./js/rated-worker.js?v=9",
-        "./js/rating-model.js": "./js/rating-model.js?v=9",
-        "./js/rating-opening.js": "./js/rating-opening.js?v=9",
-        "./js/rating.js": "./js/rating.js?v=9",
-        "./js/region-art.js": "./js/region-art.js?v=9",
-        "./js/regions.js": "./js/regions.js?v=9",
-        "./js/rules.js": "./js/rules.js?v=9",
-        "./js/scenery.js": "./js/scenery.js?v=9",
-        "./js/session.js": "./js/session.js?v=9",
-        "./js/strategy.js": "./js/strategy.js?v=9",
-        "./js/world-generator.js": "./js/world-generator.js?v=9",
-        "./js/world-growth.js": "./js/world-growth.js?v=9",
-        "./js/world-weave.js": "./js/world-weave.js?v=9"
+        "./js/analysis-dyadics.js": "./js/analysis-dyadics.js?v=10",
+        "./js/analysis-modes.js": "./js/analysis-modes.js?v=10",
+        "./js/analysis-reductions.js": "./js/analysis-reductions.js?v=10",
+        "./js/analysis-symmetry.js": "./js/analysis-symmetry.js?v=10",
+        "./js/analysis-values.js": "./js/analysis-values.js?v=10",
+        "./js/analysis-worker.js": "./js/analysis-worker.js?v=10",
+        "./js/analyzer.js": "./js/analyzer.js?v=10",
+        "./js/audio.js": "./js/audio.js?v=10",
+        "./js/board.js": "./js/board.js?v=10",
+        "./js/bot-calibration.js": "./js/bot-calibration.js?v=10",
+        "./js/builder.js": "./js/builder.js?v=10",
+        "./js/custom-board.js": "./js/custom-board.js?v=10",
+        "./js/daily-progress.js": "./js/daily-progress.js?v=10",
+        "./js/daily.js": "./js/daily.js?v=10",
+        "./js/difficulty.js": "./js/difficulty.js?v=10",
+        "./js/draw.js": "./js/draw.js?v=10",
+        "./js/garden-layouts.js": "./js/garden-layouts.js?v=10",
+        "./js/generator.js": "./js/generator.js?v=10",
+        "./js/guide-lessons.js": "./js/guide-lessons.js?v=10",
+        "./js/guide.js": "./js/guide.js?v=10",
+        "./js/landscape.js": "./js/landscape.js?v=10",
+        "./js/linkplay.js": "./js/linkplay.js?v=10",
+        "./js/map-catalog.js": "./js/map-catalog.js?v=10",
+        "./js/map-seed.js": "./js/map-seed.js?v=10",
+        "./js/maps/habitats.js": "./js/maps/habitats.js?v=10",
+        "./js/maps/structures.js": "./js/maps/structures.js?v=10",
+        "./js/maps/water.js": "./js/maps/water.js?v=10",
+        "./js/maps/woodland.js": "./js/maps/woodland.js?v=10",
+        "./js/opponents.js": "./js/opponents.js?v=10",
+        "./js/players.js": "./js/players.js?v=10",
+        "./js/practice.js": "./js/practice.js?v=10",
+        "./js/preview.js": "./js/preview.js?v=10",
+        "./js/rated-bots.js": "./js/rated-bots.js?v=10",
+        "./js/rated-deal.js": "./js/rated-deal.js?v=10",
+        "./js/rated-ui.js": "./js/rated-ui.js?v=10",
+        "./js/rated-worker.js": "./js/rated-worker.js?v=10",
+        "./js/rating-model.js": "./js/rating-model.js?v=10",
+        "./js/rating-opening.js": "./js/rating-opening.js?v=10",
+        "./js/rating.js": "./js/rating.js?v=10",
+        "./js/region-art.js": "./js/region-art.js?v=10",
+        "./js/regions.js": "./js/regions.js?v=10",
+        "./js/rules.js": "./js/rules.js?v=10",
+        "./js/scenery.js": "./js/scenery.js?v=10",
+        "./js/session.js": "./js/session.js?v=10",
+        "./js/strategy.js": "./js/strategy.js?v=10",
+        "./js/world-generator.js": "./js/world-generator.js?v=10",
+        "./js/world-growth.js": "./js/world-growth.js?v=10",
+        "./js/world-weave.js": "./js/world-weave.js?v=10"
       }
     }
   </script>
-  <script type="module" src="./js/app.js?v=9"></script>
+  <script type="module" src="./js/app.js?v=10"></script>
 </body>
 </html>

@@ -1,5 +1,8 @@
+import { normalizeMapSeed } from './map-seed.js';
 import { computerLevelLabel } from './opponents.js';
-import { ratedBotSummary } from './rating.js';
+import { DEFAULT_RATED_BOT, RATED_BOTS, RATED_BOT_BY_ID } from './rated-bots.js';
+import { RATED_BOARD_VERSION } from './rated-deal.js';
+import { INITIAL_RATING } from './rating-model.js';
 
 const variantNames = {green: 'Green', redblue: 'Red–Blue'};
 const statusMessages = {
@@ -27,6 +30,34 @@ export function difficultyRange(opening) {
   const low = Math.floor(opening.lower);
   const high = Math.ceil(opening.upper);
   return (low === high ? String(low) : low + '–' + high) + ' / 100';
+}
+
+export function ratedOpponentLabel(level, snapshot) {
+  const profile = RATED_BOT_BY_ID[level];
+  const rating = Math.round(snapshot?.rating ?? profile?.elo);
+  const label = profile?.name ?? computerLevelLabel(level);
+  if (!Number.isFinite(rating)) return label;
+  return label + ' (' + rating + (profile ? ' Elo)' : ' Groundwork)');
+}
+
+export function openingSummary({opening, seat, expected}, completed) {
+  const lines = [];
+  if (completed) {
+    lines.push(opening.winner ? 'Perfect play favored ' + (opening.winner === seat ? 'you.' : 'the bot.') :
+      'The perfect-play winner is unknown.');
+  }
+  if (opening.information === 'forced') {
+    const outcome = opening.forcedWinner === seat ? 'a win' : 'a loss';
+    lines.push('Against this bot, every sequence of your legal cuts from the opening gives you ' + outcome + '. No rating change.');
+  } else {
+    if (Number.isFinite(expected)) lines.push('Your estimated opening win chance was ' + winPercent(expected) + '.');
+    if (opening.information === 'unresolved') {
+      lines.push('The search could not establish whether both results were possible against this bot. No rating change.');
+    } else if (completed) {
+      lines.push('Both a win and a loss were possible against this bot.');
+    }
+  }
+  return lines.join(' ');
 }
 
 function make(tag, className, text) {
@@ -77,7 +108,7 @@ function renderChart(host, records, games) {
   host.replaceChildren(svg);
 }
 
-export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onReplay}) {
+export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onReplay, onPractice}) {
   dialog.innerHTML = `
     <header class="rated-desk__header">
       <div><h2 id="rated-title">Rated play</h2><p>Untimed bot matches · Saved on this device</p></div>
@@ -94,12 +125,20 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
       </section>
       <section class="rated-deal" aria-labelledby="rated-next">
         <h3 id="rated-next">Play a match</h3>
-        <p data-rated="deal-info">Your garden, seat and opening player are drawn when you start.</p>
+        <p data-rated="deal-info"></p>
         <div class="rated-deal__controls">
-          <label>Bot opponent<select data-rated="level"><option value="easy">Easy</option><option value="standard" selected>Standard</option><option value="expert">Expert</option></select></label>
+          <label>Bot opponent<select data-rated="level" aria-describedby="rated-bot-description"></select></label>
           <button type="button" class="primary" data-rated="start">Draw rated match</button>
         </div>
-        <p class="rated-calibration" data-rated="bot"></p>
+        <p class="rated-bot-description" id="rated-bot-description"><span data-rated="bot"></span> <a data-rated="bot-source" target="_blank" rel="noopener">Chess.com profile</a></p>
+        <details class="rated-seed" data-rated="practice-seed">
+          <summary>Practice a seed</summary>
+          <form class="rated-deal__controls" data-rated="practice-form" novalidate>
+            <label for="rated-seed">Map seed<input id="rated-seed" data-rated="seed" type="text" placeholder="A35D7E" required autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="rated-seed-help"></label>
+            <button type="submit" class="secondary" data-rated="practice-start">Play unrated</button>
+          </form>
+          <p id="rated-seed-help">Enter a six-digit hex seed to play this garden against the selected bot.</p>
+        </details>
         <button class="rated-text-button" type="button" data-rated="forfeit" hidden>Resign this match</button>
       </section>
       <p class="rated-notice" data-rated="notice" role="status" aria-live="polite"></p>
@@ -117,13 +156,18 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
         <div data-rated="history"></div>
       </section>
       <details class="rated-help"><summary>How ratings work</summary>
-        <p>Each ruleset starts at the same reference rating. A prediction uses your rating, the calibrated opponent, the opening advantage and the structural difficulty of the deal. An unexpected result usually moves your rating farther.</p>
-        <p>RD measures uncertainty about your rating. The shaded band spans one RD on either side of your estimate. Standard anchors each bot ladder at 1000. An opening where the result is forced against the assigned bot contributes zero rating evidence. An unresolved eligibility check also gives zero change. Only completed rated games and resignations enter this history.</p>
+        <p>Your Green and Red–Blue ratings each start at ${INITIAL_RATING}. The named bots use their published Chess.com Elo as an initial estimate of their Hackenbush strength. Each plays its own Hackenbush strategy.</p>
+        <p>Your rating can change when both a win and a loss are possible against the assigned bot. A forced result or an inconclusive check gives zero change. RD measures uncertainty about your rating. The chart shades one RD on either side of your estimate.</p>
       </details>
       <button class="rated-text-button rated-reset" data-rated="reset" type="button">Reset rated history</button>
     </div>`;
   const field = name => dialog.querySelector('[data-rated="' + name + '"]');
   const switches = [...dialog.querySelectorAll('[data-pool]')];
+  const levels = field('level');
+  for (const profile of RATED_BOTS) {
+    levels.add(new Option(ratedOpponentLabel(profile.id), profile.id));
+  }
+  let selection = DEFAULT_RATED_BOT;
   let variant = 'redblue';
   let busy = false;
   let confirmation = null;
@@ -140,17 +184,33 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
     field('rd').textContent = pool ? '±' + Math.round(pool.rd) : '—';
     field('results').textContent = pool ? pool.wins + ' / ' + pool.losses : '—';
     field('provisional').textContent = pool?.provisional ? 'Provisional' : '';
-    field('deal-info').textContent = active ? 'Your ' + variantNames[active.variant] + ' match against ' +
-      computerLevelLabel(active.level) + ' is saved at cut ' + active.game.moves.length + '.' :
-      'Your garden, seat and opening player are drawn when you start.';
-    const bot = active?.bot ?? ratedBotSummary(variant, field('level').value);
-    if (active) field('level').value = active.level;
-    field('level').disabled = busy || !!active;
+    if (active) {
+      const cuts = active.game.moves.length;
+      field('deal-info').textContent = [variantNames[active.variant], active.family, 'Seed ' + active.seed,
+        cuts + (cuts === 1 ? ' cut played' : ' cuts played')].filter(Boolean).join(' · ');
+    } else {
+      field('deal-info').textContent = 'Draw a full garden, your seat and the opening player from a fresh map seed.';
+    }
+    // A saved classic match keeps its original opponent until it is finished.
+    levels.querySelector('[data-legacy]')?.remove();
+    if (active && !RATED_BOT_BY_ID[active.level]) {
+      const legacy = new Option(ratedOpponentLabel(active.level, active.bot), active.level);
+      legacy.dataset.legacy = '';
+      levels.add(legacy);
+    }
+    levels.value = active?.level ?? selection;
+    levels.disabled = busy || !!active;
+    const profile = RATED_BOT_BY_ID[levels.value];
+    field('bot').textContent = profile ? profile.style : 'This saved match uses the original Groundwork opponent.';
+    const source = field('bot-source');
+    source.hidden = !profile;
+    if (profile) source.href = profile.source;
+    else source.removeAttribute('href');
+    field('practice-seed').hidden = !profile;
+    field('seed').disabled = busy;
+    field('practice-start').disabled = busy;
     field('start').disabled = busy || state.status !== 'ok';
     field('start').textContent = busy ? 'Working…' : active ? 'Resume rated match' : 'Draw rated match';
-    field('bot').textContent = bot ? computerLevelLabel(bot.level) + ' · overall benchmark ' + Math.round(bot.rating) +
-      (bot.level === 'standard' ? ' · reference bot' : ' · calibration SD ' + Math.round(bot.sd)) +
-      (bot.provisional ? ' · provisional' : '') : '';
     field('forfeit').hidden = !active;
     field('forfeit').disabled = busy;
     field('reset').disabled = busy || state.status === 'newer' || state.status === 'unavailable';
@@ -171,27 +231,33 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
       const outcome = row.reason === 'forfeit' ? 'Resigned' : row.won ? 'Win' : 'Loss';
       const detail = make('details');
       const summary = make('summary');
-      summary.append(make('strong', '', outcome + ' · ' + computerLevelLabel(row.level)),
-        make('small', '', dateFormat.format(new Date(row.endedAt)) + ' · ' + row.seed + (row.rated ? '' : ' · no rating evidence')));
-      const evidence = row.opening.information === 'forced' ? 'The outcome was forced against this bot.'
-        : row.opening.information === 'unresolved' ? 'The search did not certify both outcomes against this bot.'
-        : 'Both a win and a loss were possible against this bot.';
+      summary.append(make('strong', '', outcome + ' · ' + ratedOpponentLabel(row.level, row.bot)),
+        make('small', '', [dateFormat.format(new Date(row.endedAt)), row.family, 'Seed ' + row.seed,
+          row.rated ? '' : 'no rating change'].filter(Boolean).join(' · ')));
       detail.append(summary,
         make('p', '', 'Rating ' + Math.round(row.before) + ' → ' + Math.round(row.after) +
           ' · RD ' + Math.round(row.rdBefore) + ' → ' + Math.round(row.rdAfter) + '.'),
-        make('p', '', 'Perfect play favored ' + (row.opening.winner === row.seat ? 'you' : 'the bot') +
-          '. Your opening win estimate was ' + winPercent(row.expected) + '. ' + evidence),
-        make('p', '', 'Bot benchmark ' + Math.round(row.bot.rating) + ' · Opening structural difficulty ' + difficultyRange(row.opening) + '.'));
+        make('p', '', openingSummary(row, true)),
+        make('p', '', 'Opening structural difficulty · ' + difficultyRange(row.opening) + '.'));
       const change = make('span', 'rated-history__delta', signedRating(row.delta));
       change.title = Math.round(row.before) + ' to ' + Math.round(row.after);
-      item.append(detail, change);
+      const actions = make('div', 'rated-history__actions');
+      const practice = make('button', 'rated-review', 'Practice');
+      practice.type = 'button';
+      practice.disabled = busy;
+      practice.dataset.ratedPractice = row.seed;
+      practice.setAttribute('aria-label', 'Practice ' + variantNames[variant] + ' seed ' + row.seed);
+      practice.addEventListener('click', () => onPractice(row));
+      actions.append(practice);
       if (row.game && row.reason !== 'forfeit') {
         const replay = make('button', 'rated-review', 'Analyze');
         replay.type = 'button';
+        replay.disabled = busy;
         replay.setAttribute('aria-label', 'Analyze ' + variantNames[variant] + ' match ' + row.seed);
         replay.addEventListener('click', () => onReplay(row));
-        item.append(replay);
+        actions.append(replay);
       }
+      item.append(detail, change, actions);
       list.append(item);
     }
     history.append(list);
@@ -235,7 +301,24 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
     dismiss();
     refresh();
   });
-  field('level').addEventListener('change', refresh);
+  levels.addEventListener('change', () => {
+    selection = levels.value;
+    refresh();
+  });
+  const seedInput = field('seed');
+  seedInput.addEventListener('input', () => seedInput.setCustomValidity(''));
+  field('practice-form').addEventListener('submit', event => {
+    event.preventDefault();
+    if (busy || !RATED_BOT_BY_ID[levels.value]) return;
+    const seed = normalizeMapSeed(seedInput.value);
+    if (!seed) {
+      seedInput.setCustomValidity('Use six hexadecimal digits, 0–9 or A–F.');
+      seedInput.reportValidity();
+      return;
+    }
+    seedInput.value = seed;
+    onPractice({seed, variant, boardVersion: RATED_BOARD_VERSION, level: levels.value});
+  });
   field('start').addEventListener('click', () => {
     dismiss();
     run(() => onStart(variant, field('level').value), 'Preparing your match…');

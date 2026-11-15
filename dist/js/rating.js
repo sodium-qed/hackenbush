@@ -1,23 +1,35 @@
 import { MAP_COUNT, nextMapSeed } from './map-seed.js';
 import { COMPUTER_LEVELS, computerLevelLabel } from './opponents.js';
-import { ratedBotMove, ratedDeal } from './rated-deal.js';
+import { RATED_BOT_BY_ID } from './rated-bots.js';
+import { isRatedBot, RATED_BOARD_VERSION, ratedBotMove, ratedDeal } from './rated-deal.js';
 import { createGame, playCut, restoreGame, saveData } from './session.js';
-import { otherSide } from './rules.js';
-import { forecastOpening, isProvisional, newPool, ratedBotSummary } from './rating-model.js';
+import { initialEdges, legalMoves, otherSide } from './rules.js';
+import { forecastOpening, isProvisional, LEGACY_RATING_SHIFT, newPool, ratedBotSummary } from './rating-model.js';
 import { prepareRatedOpening } from './rating-opening.js';
 
 export { prepareRatedOpening, ratedBotSummary };
 export const RATING_KEY = 'groundwork.hackenbush.ratings';
 export const HISTORY_PER_VARIANT = 40;
-const FORMAT = 2;
+const FORMAT = 3;
 const variants = ['green', 'redblue'];
 const sides = ['blue', 'red'];
 const sameRealmWrites = new WeakMap();
 const safeCount = n => Number.isSafeInteger(n) && n >= 0;
 const inRange = (n, low, high) => Number.isFinite(n) && n >= low && n <= high;
 const validDate = n => safeCount(n) && n <= 8_640_000_000_000_000;
-const isLevel = name => typeof name === 'string' && Object.hasOwn(COMPUTER_LEVELS, name);
 const validId = id => typeof id === 'string' && /^rated-[0-9a-f]{32}$/.test(id);
+
+function validPolicy(version, level) {
+  return version === 1 ? typeof level === 'string' && Object.hasOwn(COMPUTER_LEVELS, level) : version === RATED_BOARD_VERSION && isRatedBot(level);
+}
+
+export function createRatedGame(variant, level, seed, id, boardVersion = RATED_BOARD_VERSION) {
+  if (!variants.includes(variant) || !validPolicy(boardVersion, level)) throw new RangeError('Invalid rated configuration.');
+  const deal = ratedDeal(seed, boardVersion), opponent = otherSide(deal.seat);
+  const name = boardVersion === 1 ? computerLevelLabel(level) : RATED_BOT_BY_ID[level].name;
+  return createGame({ ...deal, variant, matchId: id, opponent: 'computer', timed: false,
+    players: { [deal.seat]: { kind: 'human', name: 'You' }, [opponent]: { kind: 'computer', name, level } } });
+}
 
 function emptyLedger(status = 'ok') {
   return { status, version: FORMAT, epoch: null, issued: 0, stream: null,
@@ -34,13 +46,15 @@ function validPool(pool) {
     pool.wins + pool.losses === pool.games && pool.provisional === isProvisional(pool.ratedGames, pool.rd);
 }
 
-function validOpening(o) {
-  return o && sides.includes(o.winner) && ['skill', 'forced', 'unresolved'].includes(o.information) &&
+function validOpening(o, { boardVersion, variant }) {
+  return o && (sides.includes(o.winner) || (boardVersion === 5 && variant === 'redblue' && o.winner === null)) &&
+    ['skill', 'forced', 'unresolved'].includes(o.information) &&
     (o.information === 'forced' ? sides.includes(o.forcedWinner) : o.forcedWinner === null) &&
     typeof o.model === 'string' && typeof o.certificate === 'string' && safeCount(o.searchNodes) &&
     inRange(o.score, 0, 100) && inRange(o.lower, 0, o.score) && inRange(o.upper, o.score, 100) && inRange(o.coverage, 0, 1) &&
     [o.legalMoves, o.winningMoves, o.losingMoves, o.unknownMoves, o.edges].every(safeCount) &&
-    o.legalMoves === o.winningMoves + o.losingMoves + o.unknownMoves && o.legalMoves <= o.edges && o.edges <= 22;
+    o.legalMoves === o.winningMoves + o.losingMoves + o.unknownMoves && o.legalMoves <= o.edges &&
+    o.edges > 0 && o.edges <= (boardVersion === 1 ? 22 : 256);
 }
 
 function validBot(bot, level) {
@@ -56,28 +70,34 @@ function sameAssignment(a, game) {
     game.players?.[otherSide(a.seat)]?.kind === 'computer' && game.players[otherSide(a.seat)].level === a.level;
 }
 
-function validAssignment(a) {
-  if (!a || !validId(a.id) || !variants.includes(a.variant) || !isLevel(a.level) ||
+function validAssignment(a, inspectSession) {
+  if (!a || !validId(a.id) || !variants.includes(a.variant) || !validPolicy(a.boardVersion, a.level) || a.timed !== false ||
       typeof a.seed !== 'string' || !/^[0-9A-F]{6}$/.test(a.seed) || !sides.includes(a.seat) || !sides.includes(a.firstSide) ||
-      !validOpening(a.opening) || !validBot(a.bot, a.level) || !inRange(a.expected, 0, 1) ||
+      !validOpening(a.opening, a) || !validBot(a.bot, a.level) || !inRange(a.expected, 0, 1) ||
       !sameAssignment(a, a.game) || !Array.isArray(a.game.moves) || a.game.moves.length > a.opening.edges ||
-      !a.game.moves.every(id => typeof id === 'string' && /^e(?:0|[1-9]\d?)$/.test(id) && Number(id.slice(1)) < a.opening.edges)) return false;
-  const deal = ratedDeal(a.seed);
-  return a.seat === deal.seat && a.firstSide === deal.firstSide &&
-    a.boardVersion === deal.boardVersion && a.difficulty === deal.difficulty;
+      !a.game.moves.every(id => typeof id === 'string' && /^e(?:0|[1-9]\d{0,2})$/.test(id) && Number(id.slice(1)) < a.opening.edges)) return null;
+  const deal = ratedDeal(a.seed, a.boardVersion);
+  if (a.seat !== deal.seat || a.firstSide !== deal.firstSide || a.difficulty !== deal.difficulty) return null;
+  const session = inspectSession(a.game);
+  if (!session || session.edges !== a.opening.edges || session.legalMoves !== a.opening.legalMoves ||
+      (a.boardVersion === 5 && session.family !== a.family)) return null;
+  return session;
 }
 
-function validRecord(r) {
-  return validAssignment(r) && validDate(r.startedAt) && validDate(r.endedAt) && typeof r.won === 'boolean' &&
+function validRecord(r, inspectSession) {
+  const session = validAssignment(r, inspectSession);
+  return session && validDate(r.startedAt) && validDate(r.endedAt) && typeof r.won === 'boolean' &&
     typeof r.rated === 'boolean' && r.rated === (r.opening.information === 'skill') &&
     (r.won ? r.reason === 'win' : ['loss', 'forfeit'].includes(r.reason)) &&
+    session.victor === (r.reason === 'forfeit' ? null : r.won ? r.seat : otherSide(r.seat)) &&
     validMoment({ rating: r.before, rd: r.rdBefore }) && validMoment({ rating: r.after, rd: r.rdAfter }) &&
     Number.isFinite(r.delta) && typeof r.model === 'string';
 }
 
-function validActive(a) {
-  return validAssignment(a) && validDate(a.startedAt) && restoreGame(a.game) !== null && validMoment(a.forecast?.win) && validMoment(a.forecast?.loss) &&
+function validActive(a, inspectSession) {
+  return validAssignment(a, inspectSession) && validDate(a.startedAt) && validMoment(a.forecast?.win) && validMoment(a.forecast?.loss) &&
     a.forecast.expected === a.expected && a.forecast.rated === (a.opening.information === 'skill') &&
+    (a.forecast.deltas === undefined || (Number.isFinite(a.forecast.deltas?.win) && Number.isFinite(a.forecast.deltas?.loss))) &&
     typeof a.forecast.model === 'string' && typeof a.forecast.calibration === 'string';
 }
 
@@ -88,7 +108,7 @@ function trimHistory(history) {
 
 // The v1 interchange layout kept the same receipts in per-variant lists.
 // Merge on read. Commit the migration only with a successful later mutation.
-function decode(raw) {
+function decode(raw, inspectSession) {
   if (raw === null) return emptyLedger();
   if (raw.length > 1_000_000) return emptyLedger('invalid');
   const data = JSON.parse(raw);
@@ -97,16 +117,40 @@ function decode(raw) {
     const records = variants.flatMap(v => data.pools[v].history);
     data.history = records.sort((a, b) => b.endedAt - a.endedAt);
     for (const v of variants) delete data.pools[v].history;
-    data.version = FORMAT;
+    data.version = 2;
   }
-  if (data?.version !== FORMAT || !validId(data.epoch) || !safeCount(data.issued) || data.issued > MAP_COUNT ||
+  if (![2, FORMAT].includes(data?.version) || !validId(data.epoch) || !safeCount(data.issued) || data.issued > MAP_COUNT ||
       !variants.every(v => validPool(data.pools?.[v])) || !Array.isArray(data.history) ||
-      data.history.length > HISTORY_PER_VARIANT * variants.length || !data.history.every(validRecord) ||
-      !(data.active === null || validActive(data.active))) return emptyLedger('invalid');
+      data.history.length > HISTORY_PER_VARIANT * variants.length || !data.history.every(r => validRecord(r, inspectSession)) ||
+      !(data.active === null || validActive(data.active, inspectSession))) return emptyLedger('invalid');
   const stream = data.stream;
   if (data.issued === 0 ? stream !== null : !stream || !safeCount(stream.current) || stream.current >= MAP_COUNT ||
       !safeCount(stream.step) || stream.step >= MAP_COUNT || !(stream.step & 1)) return emptyLedger('invalid');
   if (data.issued !== data.pools.green.games + data.pools.redblue.games + Number(data.active !== null)) return emptyLedger('invalid');
+  if (data.version === 2) {
+    const assignments = data.active ? [...data.history, data.active] : data.history;
+    if (assignments.some(a => a.boardVersion !== 1)) return emptyLedger('invalid');
+    for (const a of assignments) {
+      a.bot.rating += LEGACY_RATING_SHIFT;
+      a.bot.modelRating += LEGACY_RATING_SHIFT;
+      a.bot.sourceKind = 'legacy-fit';
+    }
+    for (const r of data.history) {
+      r.before += LEGACY_RATING_SHIFT;
+      r.after += LEGACY_RATING_SHIFT;
+    }
+    if (data.active) {
+      const { forecast } = data.active;
+      const oldRating = data.pools[data.active.variant].rating;
+      // Preserve the original subtraction, even across floating-point binades.
+      forecast.deltas = { win: forecast.win.rating - oldRating, loss: forecast.loss.rating - oldRating };
+      forecast.win.rating += LEGACY_RATING_SHIFT;
+      forecast.loss.rating += LEGACY_RATING_SHIFT;
+      if (Number.isFinite(forecast.offset)) forecast.offset -= LEGACY_RATING_SHIFT;
+    }
+    for (const v of variants) data.pools[v].rating += LEGACY_RATING_SHIFT;
+    data.version = FORMAT;
+  }
   return { ...data, status: 'ok' };
 }
 
@@ -154,11 +198,30 @@ export function createRatingStore(options = {}) {
   const clock = options.clock ?? Date.now;
   const prepare = options.prepareOpening ?? prepareRatedOpening;
 
+  // Validating an old receipt means replaying its legal moves on the original
+  // board. Keep only the small validation result, keyed by the exact snapshot,
+  // so a new cut does not regenerate up to eighty unchanged full gardens.
+  const checkedSessions = new Map();
+  function inspectSession(saved) {
+    const key = JSON.stringify(saved);
+    let info = checkedSessions.get(key);
+    if (info) checkedSessions.delete(key);
+    else {
+      const game = restoreGame(saved);
+      if (!game) return null;
+      info = { edges: game.board.edges.length, legalMoves: legalMoves(game.board, initialEdges(game.board), game.firstSide).length,
+        family: game.board.family, victor: game.victor };
+    }
+    checkedSessions.set(key, info);
+    if (checkedSessions.size > HISTORY_PER_VARIANT * variants.length + 1) checkedSessions.delete(checkedSessions.keys().next().value);
+    return info;
+  }
+
   function read() {
     if (!storage) return emptyLedger('unavailable');
     let raw;
     try { raw = storage.getItem(RATING_KEY); } catch { return emptyLedger('unavailable'); }
-    try { return decode(raw); } catch { return emptyLedger('invalid'); }
+    try { return decode(raw, inspectSession); } catch { return emptyLedger('invalid'); }
   }
 
   async function locked(work) {
@@ -182,26 +245,20 @@ export function createRatingStore(options = {}) {
     return success(state, extra);
   }
 
-  function newGame(variant, level, seed, id) {
-    const deal = ratedDeal(seed), bot = otherSide(deal.seat);
-    return createGame({ ...deal, variant, matchId: id, opponent: 'computer', timed: false,
-      players: { [deal.seat]: { kind: 'human', name: 'You' },
-        [bot]: { kind: 'computer', name: computerLevelLabel(level), level } } });
-  }
-
   async function start(variant, level) {
     const before = read();
     if (before.status !== 'ok') return failed(before.status, before);
-    if (!variants.includes(variant) || !isLevel(level)) return failed('ineligible', before);
+    if (!variants.includes(variant) || (!isRatedBot(level) && !(before.active && level === before.active.level))) return failed('ineligible', before);
     if (before.active) return success(before);
     if (before.issued >= MAP_COUNT) return failed('exhausted', before);
     if (!entropy?.getRandomValues) return failed('unavailable', before);
     let draw, game, opening, forecast, bot;
     try {
       draw = nextMapSeed(before.stream, entropy);
-      game = newGame(variant, level, draw.seed, randomId(entropy));
+      game = createRatedGame(variant, level, draw.seed, randomId(entropy));
       opening = await prepare(game);
-      if (!validOpening(opening)) return failed('prepare-failed', before);
+      if (!validOpening(opening, game) || opening.edges !== game.live.length ||
+          opening.legalMoves !== legalMoves(game.board, game.live, game.firstSide).length) return failed('prepare-failed', before);
       forecast = forecastOpening(before.pools[variant], game, opening);
       bot = ratedBotSummary(variant, level);
       if (!validMoment(forecast.win) || !validMoment(forecast.loss) || !validBot(bot, level)) return failed('prepare-failed', before);
@@ -215,7 +272,7 @@ export function createRatingStore(options = {}) {
       state.issued++;
       state.stream = draw.state;
       state.active = { id: game.matchId, seed: game.seed, variant, level, seat: game.seat, firstSide: game.firstSide,
-        boardVersion: game.boardVersion, difficulty: game.difficulty, timed: false, game: saveData(game),
+        boardVersion: game.boardVersion, difficulty: game.difficulty, family: game.board.family, timed: false, game: saveData(game),
         startedAt: clock(), bot, opening, forecast, expected: forecast.expected };
       return write(state);
     });
@@ -231,11 +288,13 @@ export function createRatingStore(options = {}) {
     const active = state.active, pool = state.pools[active.variant];
     const won = reason === 'win';
     const { rated, model, calibration } = active.forecast;
-    const next = won ? active.forecast.win : active.forecast.loss;
+    const outcome = won ? 'win' : 'loss';
+    const next = active.forecast[outcome];
     const { forecast, ...assignment } = active;
     const record = { ...assignment, game: saveData(game), endedAt: clock(), reason, won, rated, model, calibration,
       nuisanceSd: forecast.nuisanceSd, transferSd: forecast.transferSd,
-      before: pool.rating, after: next.rating, delta: next.rating - pool.rating, rdBefore: pool.rd, rdAfter: next.rd };
+      before: pool.rating, after: next.rating, delta: forecast.deltas?.[outcome] ?? next.rating - pool.rating,
+      rdBefore: pool.rd, rdAfter: next.rd };
     const ratedGames = pool.ratedGames + Number(rated);
     state.pools[active.variant] = { ...next, games: pool.games + 1, ratedGames, wins: pool.wins + Number(won),
       losses: pool.losses + Number(!won), provisional: isProvisional(ratedGames, next.rd) };

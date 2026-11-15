@@ -41,11 +41,15 @@ Select **Analyze game** on the winner's card to revisit the opening or any cut. 
 
 ## Play a rated bot match
 
-Open **Rated** in the navigation. Choose a ruleset and a bot, then **Draw rated match**. Groundwork draws a fresh small, standard or large garden, assigns both seats, and shows the estimated chance of winning. Each bot's benchmark comes from paired-seat self-play on the same deal family. **Green** and **Red–Blue** each have a local rating and uncertainty estimate.
+Open **Rated**, choose Green or Red–Blue and pick an opponent. Each ruleset starts you at **1200**. Nelson (1300) is the default. The named opponents run Hackenbush strategies, and their displayed Elo labels come from the corresponding Chess.com bots. Groundwork estimates your strength locally in each ruleset.
+
+**Draw rated match** deals a full garden from the regular six-hex generator and assigns the seats. For example, `48094F` grows the same 123-branch Vine terraces in Rated and ordinary play. The bot selection changes the opponent's decisions. The seed and ruleset determine every branch, attachment and color. [Open the regular map](https://sodium-qed.github.io/hackenbush/?seed=48094F&v=5)
 
 Pause and resume your assigned match at any time. The generator uses fresh deals, and an unfinished game occupies the rated slot until you finish or resign it. If every possible sequence against that bot gives the same outcome, the result carries zero rating evidence. Games whose eligibility cannot be certified also carry zero weight. A perfect-play advantage by itself does not settle what a fallible player and bot will do.
 
-The result card shows your change. Reopen **Rated** to see the progression chart, uncertainty band, recent opponents and replays. You can reset both pools in that panel. Ratings, history and positions are kept on this browser. Daily attempts and manually selected boards remain separate.
+The result card shows your change. Open **Rated** to see the progression chart, uncertainty band, recent opponents and replays. **Practice a seed** lets you enter a six-hex code and face the selected bot. You can also open the same board and bot directly from a completed match. On Green `48094F` you open as Blue and have a winning move against Noam. [Try this unrated challenge](https://sodium-qed.github.io/hackenbush/?seed=48094F&v=5&rules=green&bot=noam)
+
+Practicing leaves your rating intact. Earlier matches stay in your history on their original boards, with ratings translated to the new 1200 starting scale.
 
 ### Research and reproducibility
 
@@ -54,7 +58,7 @@ The result card shows your change. Reopen **Rated** to see the progression chart
 | Nimber and number arithmetic, graph complexity | [Mathematical foundations](docs/research/MATHEMATICAL_FOUNDATIONS.md) |
 | Certified search, worker budgets and cancellation | [Analyzer architecture](docs/research/ANALYZER_ARCHITECTURE.md) |
 | Skill, opening advantage and uncertainty | [Rating model](docs/research/RATING_MODEL.md) |
-| Paired bot matches, fitted strengths and held-out evaluation | [Bot calibration](docs/research/BOT_CALIBRATION.md) |
+| Named opponents, paired full-garden matches and the historical calibration | [Bot calibration](docs/research/BOT_CALIBRATION.md) |
 | Strategic cut choices and controlled position experiments | [Difficulty model](docs/research/DIFFICULTY_MODEL.md) |
 | Exact oracle and comparison with the previous analyzer | [Validation results](docs/research/VALIDATION_RESULTS.md) |
 | Limits of the measurements and open questions | [Open problems](docs/research/OPEN_PROBLEMS.md) |
@@ -92,6 +96,7 @@ node scripts/benchmark-analyzer.mjs
 node scripts/difficulty-study.mjs
 node scripts/calibration.mjs --check
 node scripts/validate-ratings.mjs
+node scripts/full-garden-study.mjs
 ```
 
 With Python Playwright and Chromium installed, `python3 scripts/smoke-browser.py` also plays a full rated game through the interface, opens the same game in two tabs, checks the rating chart and exercises the replay workers.
