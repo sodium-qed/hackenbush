@@ -1,3 +1,4 @@
+export const CURRENT_BOARD_VERSION = 5;
 export const MAP_COUNT = 0x1000000;
 const MASK = MAP_COUNT - 1;
 

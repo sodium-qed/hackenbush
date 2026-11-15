@@ -1,0 +1,28 @@
+.hb-landscape {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  overflow: hidden;
+  contain: strict;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.hb-landscape > svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.hb-field > .hb-landscape ~ svg {
+  z-index: 1;
+}
+
+.hb-field > .hb-landscape ~ svg .hb-field__dot {
+  opacity: 0;
+}
+
+@media (forced-colors: active) {
+  .hb-landscape { display: none; }
+}

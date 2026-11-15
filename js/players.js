@@ -11,7 +11,7 @@ function slotMarkup(prefix, letter) {
   const id = `${prefix}-${letter}`;
   return `
     <fieldset class="hb-players__slot">
-      <legend>Entrant ${letter}</legend>
+      <legend><span class="hb-players__seat"><svg class="hb-players__icon" viewBox="0 0 24 24" aria-hidden="true"><use id="${id}-seat-icon" href="#i-person"></use></svg>Entrant ${letter}</span></legend>
       <div class="hb-players__fields">
         <div class="hb-players__field">
           <label for="${id}-name"><span class="hb-players__sr">Entrant ${letter} </span><span id="${id}-label">Name</span></label>
@@ -50,7 +50,7 @@ export function createPlayers(container, { onStart, onChange } = {}) {
   form.innerHTML = `
     <div class="hb-players__inner">
       <div class="hb-players__header">
-        <h2 id="${prefix}-title">Who’s playing?</h2>
+        <h3 id="${prefix}-title">Players</h3>
         <fieldset class="hb-players__format">
           <legend class="hb-players__sr">Play mode</legend>
           <label><input class="hb-players__sr" type="radio" name="playMode" id="${prefix}-local" value="local" checked>
@@ -61,17 +61,18 @@ export function createPlayers(container, { onStart, onChange } = {}) {
       </div>
       <p id="${prefix}-draw-note" class="hb-players__intro"></p>
       <div class="hb-players__slots">${letters.map(letter => slotMarkup(prefix, letter)).join('')}</div>
-      <div class="hb-players__footer">
-        <div class="hb-players__device" id="${prefix}-device-wrap" hidden>
-          <label for="${prefix}-device">On this device</label>
-          <div class="hb-players__select">
-            <select id="${prefix}-device" name="hostIndex">
-              <option value="0">Entrant A</option><option value="1">Entrant B</option>
-            </select>${icon('chevron')}
-          </div>
+      <div class="hb-players__device" id="${prefix}-device-wrap" hidden>
+        <label for="${prefix}-device">On this device</label>
+        <div class="hb-players__select">
+          <select id="${prefix}-device" name="hostIndex">
+            <option value="0">Entrant A</option><option value="1">Entrant B</option>
+          </select>${icon('chevron')}
         </div>
-        <button type="submit" class="hb-players__submit">${icon('die')}Draw seats &amp; reveal</button>
       </div>
+    </div>
+    <div class="hb-players__footer">
+      <span class="hb-players__reveal">${icon('eye')}2-second opening look</span>
+      <button type="submit" class="hb-players__submit">${icon('die')}Draw seats &amp; reveal</button>
     </div>`;
   container.hidden = true;
   container.append(form);
@@ -84,7 +85,7 @@ export function createPlayers(container, { onStart, onChange } = {}) {
   const note = find('draw-note');
   const slots = letters.map(letter => ({
     input: find(`${letter}-name`), kind: find(`${letter}-kind`), label: find(`${letter}-label`),
-    kindField: find(`${letter}-controller-field`), localKind: 'human'
+    kindField: find(`${letter}-controller-field`), seatIcon: find(`${letter}-seat-icon`), localKind: 'human'
   }));
   function pending() {
     const entrants = slots.map(slot => ({ name: slot.input.value, kind: link.checked ? 'human' : slot.localKind }));
@@ -114,6 +115,7 @@ export function createPlayers(container, { onStart, onChange } = {}) {
       slot.kind.disabled = link.checked;
       slot.kindField.hidden = link.checked;
       slot.kind.value = kind;
+      slot.seatIcon.setAttribute('href', kind === 'computer' ? '#i-computer' : '#i-person');
       slot.input.required = kind === 'human';
       slot.label.textContent = kind === 'human' ? 'Name' : 'Nickname';
       slot.input.placeholder = kind === 'human' ? 'Enter a name' : defaultNickname(index);
