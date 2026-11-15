@@ -87,6 +87,12 @@ const sheet = `
       </ol>
     </details>
     <details class="hb-guide-setup">
+      <summary>Replaying a map seed</summary>
+      <p>Open <strong>Map seed</strong> before the draw. Enter six digits using 0–9 or A–F, or leave it blank for a random map.
+        Each digit chooses one of 16 cuttable landmarks from left to right. Changing a digit also changes the landscape.</p>
+      <p>Use <strong>Seed</strong> beneath the board to share the map for a fresh match. <strong>Rematch</strong> plays the same layout with another seat draw.</p>
+    </details>
+    <details class="hb-guide-setup">
       <summary>Playing with turn links</summary>
       <div data-guide="timed-links">
         <p>Enter both names and choose yours under <strong>On this device</strong> before the draw.

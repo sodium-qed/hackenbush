@@ -271,13 +271,13 @@ test('the original version 2 Grove keeps its three cycles, three roots and detac
 const gardenSeeds = ['GROVE7', 'FIELD0', 'c', '🌼', '', '  /% # expert  ',
   ...Array.from({ length: 64 }, (_, i) => 'botanical-' + i)];
 
-test('every new game uses Expert, reproduces both colors, and has stable replay edge indices', () => {
-  const opening = generateBoard();
+test('the version 3 Expert gardens reproduce both colors and original replay edge indices', () => {
+  const opening = generateBoard(undefined, 'green', 'expert', 3);
   assert.equal(opening.family, 'Interwoven garden');
   assert.equal(opening.edges.length, 91);
   assert.equal(opening.edges.filter(e => e.control).length, 81);
   for (const size of ['small', 'standard', 'large', 'expert', undefined]) {
-    assert.deepEqual(generateBoard('GROVE7', 'green', size), opening);
+    assert.deepEqual(generateBoard('GROVE7', 'green', size, 3), opening);
     assert.deepEqual(generateBoard('GROVE7', 'green', size, '3'), opening);
   }
   const digest = createHash('sha256');
@@ -287,16 +287,16 @@ test('every new game uses Expert, reproduces both colors, and has stable replay 
     }
   }
   assert.equal(digest.digest('hex'), '553cfe8a7f005e9b793103a66fb125ccd84748eefe51ec48e3c20dad78170b64');
-  const copy = generateBoard();
+  const copy = generateBoard('GROVE7', 'green', 'expert', 3);
   copy.edges.find(edge => edge.control).control.x = -999;
-  assert.deepEqual(generateBoard(), opening);
+  assert.deepEqual(generateBoard('GROVE7', 'green', 'expert', 3), opening);
 });
 
 test('flowers, tree canopies, root arches and trellises contribute real cycles with shared grounds', () => {
   const families = new Set();
   const topologies = new Set();
   for (const seed of gardenSeeds) {
-    const b = generateBoard(seed, 'green');
+    const b = generateBoard(seed, 'green', 'expert', 3);
     families.add(b.family);
     topologies.add(topologySignature(b));
     assert.ok(b.edges.length >= 82 && b.edges.length <= 100, seed);
@@ -311,7 +311,8 @@ test('flowers, tree canopies, root arches and trellises contribute real cycles w
     const lifted = b.edges.filter(e => !roots.some(n => n.id === e.a || n.id === e.b));
     assert.deepEqual(reachable([above[0].id], lifted), new Set(above.map(n => n.id)), seed);
     assert.ok(lifted.length - above.length + 1 >= 20, seed);
-    const groups = Object.groupBy(b.edges, edge => edge.part);
+    const groups = {};
+    for (const edge of b.edges) (groups[edge.part] ??= []).push(edge);
     const contour = id => new Set(groups.petal.filter(e => e.a === id || e.b === id)
       .map(e => e.a === id ? e.b : e.a));
     const closedPetals = groups['flower center'].filter(edge => {
@@ -341,8 +342,8 @@ test('flowers, tree canopies, root arches and trellises contribute real cycles w
 
 test('red and blue receive exclusive quiet and cascading moves on the same garden geometry', () => {
   for (const seed of gardenSeeds) {
-    const green = generateBoard(seed);
-    const colored = generateBoard(seed, 'redblue');
+    const green = generateBoard(seed, 'green', 'expert', 3);
+    const colored = generateBoard(seed, 'redblue', 'expert', 3);
     assert.deepEqual(colored.nodes, green.nodes);
     assert.deepEqual(colored.edges.map(e => ({ ...e, color: 'green' })), green.edges);
     const roots = new Set(colored.nodes.filter(node => node.ground).map(node => node.id));
@@ -367,7 +368,7 @@ function curveSamples(a, control, b) {
 
 test('curved contours stay on the field, expose usable cut points, and meet at shared joints only', () => {
   for (const seed of gardenSeeds.slice(0, 24)) {
-    const board = generateBoard(seed);
+    const board = generateBoard(seed, 'green', 'expert', 3);
     const nodes = new Map(board.nodes.map(n => [n.id, n]));
     for (let i = 0; i < board.nodes.length; i++) {
       const a = board.nodes[i];
@@ -412,7 +413,7 @@ test('curved contours stay on the field, expose usable cut points, and meet at s
 
 test('fresh seeds are short, human-shareable, and accepted directly', () => {
   const samples = Array.from({ length: 16 }, freshSeed);
-  assert.ok(samples.every(seed => /^[A-HJ-NP-Z2-9]{6}$/.test(seed)));
+  assert.ok(samples.every(seed => /^[0-9A-F]{6}$/.test(seed)));
   assert.ok(new Set(samples).size > 1);
   for (const seed of samples) {
     assert.deepEqual(generateBoard(seed), generateBoard(seed));

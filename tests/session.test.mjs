@@ -14,8 +14,8 @@ function move(game, choice = 0, now = Date.now()) {
 }
 
 test('two people on separate devices complete a match, including refreshes and the final link', () => {
-  for (const [boardVersion, variant] of [[3, 'green'], [3, 'redblue'], [2, 'mixed']]) {
-    let host = createGame({ seed: 'GROVE7', variant, boardVersion, opponent: 'link' });
+  for (const [boardVersion, variant] of [[4, 'green'], [4, 'redblue'], [3, 'green'], [3, 'redblue'], [2, 'mixed']]) {
+    let host = createGame({ seed: boardVersion === 4 ? '00C0DE' : 'GROVE7', variant, boardVersion, opponent: 'link' });
     let guest = null;
     let active = host;
     while (!active.victor) {
@@ -45,7 +45,7 @@ test('two people on separate devices complete a match, including refreshes and t
 });
 
 test('opening an older, outgoing or diverging link preserves the local seat and latest moves', () => {
-  const first = createGame({ seed: 'GROVE7', opponent: 'link' });
+  const first = createGame({ boardVersion: 3, seed: 'GROVE7', opponent: 'link' });
   const host = move(first, -1);
   const same = receiveLink(decodeTurn(encodeTurn(host)), saveData(host));
   assert.equal(same.game.seat, 'blue');
@@ -72,12 +72,12 @@ test('legacy untimed undo reverses a whole computer turn and handles an unanswer
   const local = createGame({ boardVersion: 2, seed: 'GROVE7' });
   const secondTurn = move(move(local, -1), -1);
   assert.equal(undoTurn(secondTurn).moves.length, 1);
-  const linked = move(createGame({ seed: 'GROVE7', opponent: 'link' }));
+  const linked = move(createGame({ boardVersion: 3, seed: 'GROVE7', opponent: 'link' }));
   assert.equal(undoTurn(linked), linked);
 });
 
 test('saved games replay the branch history or reject corrupted progress', () => {
-  const start = createGame({ seed: 'GROVE7', variant: 'redblue' });
+  const start = createGame({ boardVersion: 3, seed: 'GROVE7', variant: 'redblue' });
   const next = move(start);
   assert.deepEqual(restoreGame(saveData(next)).rows, next.rows);
   assert.equal(restoreGame({ ...saveData(next), moves: ['nonexistent'] }), null);
@@ -110,7 +110,7 @@ test('a human on Red can play second and take back a turn without undoing the co
     players: { blue: { name: 'Cedar', kind: 'computer' }, red: { name: 'Iris', kind: 'human' } } });
   assert.equal(start.boardVersion, 2);
   assert.equal(start.seat, 'red');
-  const seatOnly = createGame({ seed: 'GROVE7', opponent: 'computer', seat: 'red' });
+  const seatOnly = createGame({ boardVersion: 3, seed: 'GROVE7', opponent: 'computer', seat: 'red' });
   assert.equal(seatOnly.players.blue.kind, 'computer');
   assert.equal(seatOnly.players.red.name, 'Player 2');
   assert.equal(isHumanTurn(start), false);
@@ -130,7 +130,7 @@ test('a human on Red can play second and take back a turn without undoing the co
 });
 
 test('Red can open and either or both local seats can be computer controlled', () => {
-  const start = createGame({ seed: 'GROVE7', opponent: 'local', firstSide: 'red',
+  const start = createGame({ boardVersion: 3, seed: 'GROVE7', opponent: 'local', firstSide: 'red',
     players: { blue: { kind: 'human' }, red: { kind: 'computer' } } });
   assert.equal(start.side, 'red');
   assert.equal(start.seat, 'blue');
@@ -146,7 +146,7 @@ test('Red can open and either or both local seats can be computer controlled', (
 });
 
 test('a second-seated organizer can invite Red to open and exchange named turns across devices', () => {
-  const config = { seed: 'GROVE7', variant: 'redblue', opponent: 'link', firstSide: 'red', seat: 'blue',
+  const config = { boardVersion: 3, seed: 'GROVE7', variant: 'redblue', opponent: 'link', firstSide: 'red', seat: 'blue',
     players: { blue: { name: 'Mina', kind: 'human' }, red: { name: 'Aki 🌲', kind: 'human' } } };
   const organizer = createGame(config);
   const invitation = decodeTurn(encodeTurn(organizer));
@@ -225,9 +225,9 @@ test('unversioned saved positions and published v1 links replay the original gra
 
 test('new games are timed Expert matches with independent identities; older formats keep their original settings', () => {
   for (const opponent of ['local', 'computer', 'link']) {
-    const config = { seed: 'WATCH', opponent };
+    const config = { seed: 'A07C42', opponent };
     const game = createGame(config);
-    assert.equal(game.boardVersion, 3);
+    assert.equal(game.boardVersion, 4);
     assert.equal(game.difficulty, 'expert');
     assert.equal(game.timed, true);
     assert.equal(game.deadline, null);
@@ -237,11 +237,11 @@ test('new games are timed Expert matches with independent identities; older form
     assert.equal(restoreGame(saveData(game)).matchId, game.matchId);
   }
   for (const difficulty of ['small', 'standard', 'large']) {
-    assert.throws(() => createGame({ seed: 'WATCH', difficulty }));
+    assert.throws(() => createGame({ seed: 'A07C42', difficulty }));
     assert.equal(createGame({ seed: 'WATCH', difficulty, boardVersion: 2 }).timed, false);
   }
-  assert.throws(() => createGame({ seed: 'WATCH', variant: 'mixed' }));
-  assert.throws(() => createGame({ seed: 'WATCH', timed: false }));
+  assert.throws(() => createGame({ seed: 'A07C42', variant: 'mixed' }));
+  assert.throws(() => createGame({ seed: 'A07C42', timed: false }));
   for (const boardVersion of [1, 2]) {
     assert.throws(() => createGame({ seed: 'WATCH', difficulty: 'expert', boardVersion }));
     const classic = createGame({ seed: 'WATCH', variant: 'mixed', boardVersion });
@@ -252,8 +252,57 @@ test('new games are timed Expert matches with independent identities; older form
   }
 });
 
+test('restoring a saved generation 3 Expert match reproduces its graph, moves, and pending deadline', () => {
+  const saved = { seed: 'gRoVe 🌱/旧', variant: 'redblue', difficulty: 'expert', opponent: 'link', seat: 'blue',
+    firstSide: 'red', boardVersion: 3, players: { blue: { name: 'Jun 🌿', kind: 'human' }, red: { name: 'Renée / J.', kind: 'human' } },
+    moves: ['e97', 'e94', 'e96'], timed: true, deadline: 50_000, timedOut: null, matchId: 'historic_v3' };
+  const game = restoreGame(saved, 49_999);
+  assert.deepEqual(saveData(game), saved);
+  assert.equal(game.side, 'blue');
+  assert.equal(game.board.edges.length, 98);
+  assert.equal(game.live.length, 95);
+  assert.equal(createHash('sha256').update(JSON.stringify(game.board)).digest('hex'),
+    'cd78e98aad0f3cd58627303fcd75e404154c26ac82803e1dfd3fbaf4318dd417');
+  assert.equal(createHash('sha256').update(JSON.stringify(game.live)).digest('hex'),
+    'd170d15f4c46b29c00505c43087a417e230990191076c550e309c641e19b93e1');
+  assert.equal(restoreGame(saved, 50_000).timedOut, 'blue');
+  assert.equal(restoreGame({ ...saved, boardVersion: 4 }, 49_999), null);
+});
+
+test('a hex map survives two seats, a midgame reload, and a shared timeout', () => {
+  const host = createGame({ seed: '0000af', variant: 'redblue', opponent: 'link', seat: 'red', firstSide: 'red', matchId: 'hex-table' });
+  assert.equal(host.seed, '0000AF');
+  assert.equal(host.boardVersion, 4);
+  const first = move(host, -1, 10_000);
+  const guest = receiveLink(decodeTurn(encodeTurn(first)), null, 100_000).game;
+  assert.deepEqual(guest.board, host.board);
+  const second = move(guest, -1, 100_000);
+  const returned = receiveLink(decodeTurn(encodeTurn(second)), saveData(first), 200_000).game;
+  const armed = startTurnClock(returned, 200_000);
+  const saved = JSON.parse(JSON.stringify(saveData(armed)));
+  assert.deepEqual(saved.moves, [...first.moves, second.moves[1]]);
+  assert.equal(saved.seed, '0000AF');
+  const lowercaseSave = { ...saved, seed: '0000af' };
+  assert.equal(matchKey(lowercaseSave), matchKey(saved));
+  const resumed = restoreGame(lowercaseSave, 209_999);
+  assert.deepEqual(resumed, armed);
+  assert.equal(resumed.deadline, 210_000);
+  const expired = restoreGame(saved, 210_000);
+  const final = decodeTurn(encodeTurn(expired));
+  assert.equal(final.wireVersion, 3);
+  assert.equal(final.boardVersion, 4);
+  assert.equal(final.seed, '0000AF');
+  assert.equal(final.timedOut, 'red');
+  assert.equal(final.winner, 'blue');
+  assert.deepEqual(final.moves, saved.moves);
+  assert.equal(receiveLink(final, saveData(second), 900_000).game.victor, 'blue');
+  assert.notEqual(matchKey(saved), matchKey({ ...saved, boardVersion: 3 }));
+  assert.equal(restoreGame({ ...saved, seed: 'ZZZZZZ' }, 200_001), null);
+  assert.throws(() => createGame({ seed: 'ABCDF' }));
+});
+
 test('a scheduled first turn admits cuts from its reveal through the last millisecond before expiry', () => {
-  const game = createGame({ seed: 'CUT-OFF' });
+  const game = createGame({ boardVersion: 3, seed: 'CUT-OFF' });
   const edge = legalMoves(game.board, game.live, game.side).at(-1);
   const reveal = 100_000;
   assert.equal(TURN_MS, 10_000);
@@ -284,7 +333,7 @@ test('a scheduled first turn admits cuts from its reveal through the last millis
 });
 
 test('reload keeps the absolute deadline and resolves a clock that expired while the page was closed', () => {
-  const armed = startTurnClock(createGame({ seed: 'RELOAD', firstSide: 'red' }), 200_000);
+  const armed = startTurnClock(createGame({ boardVersion: 3, seed: 'RELOAD', firstSide: 'red' }), 200_000);
   const saved = JSON.parse(JSON.stringify(saveData(armed)));
   for (const now of [199_000, 200_001, armed.deadline - 1]) {
     const resumed = restoreGame(saved, now);
@@ -310,7 +359,7 @@ test('reload keeps the absolute deadline and resolves a clock that expired while
 
 test('computers on either color receive and lose the same ten-second turn as a human', () => {
   for (const firstSide of ['blue', 'red']) {
-    const start = createGame({ seed: 'CPU-CLOCK', firstSide, opponent: 'computer',
+    const start = createGame({ boardVersion: 3, seed: 'CPU-CLOCK', firstSide, opponent: 'computer',
       players: { blue: { kind: 'computer' }, red: { kind: 'computer' } } });
     assert.equal(isHumanTurn(start), false);
     const opening = startTurnClock(start, 300_000);
@@ -328,7 +377,7 @@ test('computers on either color receive and lose the same ten-second turn as a h
 });
 
 test('an invitation and a turn in transit consume no time; reopening an active incoming turn keeps its deadline', () => {
-  const host = createGame({ seed: 'HANDOFF', opponent: 'link', firstSide: 'red', seat: 'blue' });
+  const host = createGame({ boardVersion: 3, seed: 'HANDOFF', opponent: 'link', firstSide: 'red', seat: 'blue' });
   assert.equal(startTurnClock(host, 401_000), host);
   const invite = decodeTurn(encodeTurn(host));
   const received = receiveLink({ ...invite, deadline: 401_000 }, null, 900_000).game;
@@ -352,7 +401,7 @@ test('an invitation and a turn in transit consume no time; reopening an active i
 });
 
 test('timeout results beat competing later cuts on the same branch in either arrival order', () => {
-  const host = startTurnClock(createGame({ seed: 'RACE', opponent: 'link' }), 500_000);
+  const host = startTurnClock(createGame({ boardVersion: 3, seed: 'RACE', opponent: 'link' }), 500_000);
   const timeout = expireTurn(host, host.deadline);
   const resultLink = decodeTurn(encodeTurn(timeout));
   const competing = move(host, -1, host.deadline - 1);

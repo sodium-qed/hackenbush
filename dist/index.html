@@ -4,14 +4,14 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f6f3e9">
-  <meta name="description" content="Play Expert Green or Red–Blue Hackenbush. Enter both names, draw seats, and make a cut in ten seconds on a garden of interlocking branches.">
+  <meta name="description" content="Play Expert Green or Red–Blue Hackenbush on 16,777,216 seeded maps. Draw seats and make a cut in ten seconds among bridges, flowers and branching trees.">
   <title>Hackenbush · Groundwork</title>
   <link rel="icon" href="./favicon.svg" type="image/svg+xml">
   <link rel="preload" href="./fonts/instrument-serif.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./style.css?v=3">
-  <link rel="stylesheet" href="./board.css?v=3">
-  <link rel="stylesheet" href="./guide.css?v=3">
-  <link rel="stylesheet" href="./players.css?v=3">
+  <link rel="stylesheet" href="./style.css?v=4">
+  <link rel="stylesheet" href="./board.css?v=4">
+  <link rel="stylesheet" href="./guide.css?v=4">
+  <link rel="stylesheet" href="./players.css?v=4">
 </head>
 <body>
   <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -58,7 +58,7 @@
       <div class="hero-copy"><h1 id="title">Hackenbush</h1>
         <p>Cut a branch. Everything it disconnects from the ground falls.<br>Make the last move to win.</p>
       </div>
-      <img class="hero-art" src="./art/garden-engraving.webp" alt="" width="650" height="215" fetchpriority="high">
+      <img class="hero-art" id="hero-art" src="./art/garden-engraving.webp" alt="" width="650" height="215" fetchpriority="high">
     </section>
     <div id="game-table" class="table-layout" data-phase="ready" tabindex="-1">
       <div class="play-column">
@@ -71,12 +71,17 @@
             <div class="garden-title" id="garden-title" hidden><svg class="icon" aria-hidden="true"><use href="#i-branch"/></svg><h2 id="garden-name">Garden</h2></div>
             <div class="board-context"><span id="board-caption" class="board-caption">Expert garden</span><button class="secondary new-game" type="button" id="new-game" hidden><svg class="icon"><use href="#i-die"/></svg>New game</button></div>
           </div>
+          <details id="seed-entry" class="seed-entry">
+            <summary><span><svg class="icon" aria-hidden="true"><use href="#i-field"/></svg>Map seed</span><span class="seed-summary"><span id="seed-summary">Random · 16,777,216 maps</span><svg class="icon" aria-hidden="true"><use href="#i-chevron"/></svg></span></summary>
+            <div class="seed-controls"><label for="map-seed">Seed code<input id="map-seed" type="text" placeholder="A35D7E" spellcheck="false" autocapitalize="characters" autocomplete="off" aria-describedby="seed-help"></label><p id="seed-help">Enter six digits using 0–9 or A–F to replay a map. Leave blank for a random draw.</p></div>
+          </details>
           <div id="players-view" tabindex="-1" hidden></div>
           <div class="field" id="field" hidden>
             <div class="field-head"><div class="small-caption"><svg class="icon" aria-hidden="true"><use href="#i-field"/></svg><span id="field-label">Playing field</span></div><div id="edge-key" class="edge-key"></div></div>
-            <div class="board-scroll" id="board-scroll" tabindex="-1"><div id="board"></div></div>
+            <div class="board-scroll" id="board-scroll" tabindex="-1"><div id="board"></div><ol id="landmarks" class="landmarks" aria-label="Landmarks from left to right" hidden></ol></div>
           </div>
           <div class="board-tools" id="board-tools" hidden>
+            <button id="share-map" type="button" class="tool-action" hidden><svg class="icon"><use href="#i-link"/></svg><span>Seed <code id="map-code"></code></span></button>
             <button id="hint" type="button" class="tool-action"><svg class="icon"><use href="#i-hint"/></svg>Hint</button>
             <button id="undo" type="button" class="tool-action" disabled><svg class="icon"><use href="#i-undo"/></svg>Undo</button>
             <button id="zoom" type="button" class="tool-action zoom" aria-pressed="false"><svg class="icon"><use href="#i-zoom"/></svg><span>Zoom board</span></button>
@@ -128,17 +133,21 @@
   <noscript>Enable JavaScript to play Hackenbush.</noscript>
   <script type="importmap">
     { "imports": {
-      "./js/board.js": "./js/board.js?v=3",
-      "./js/draw.js": "./js/draw.js?v=3",
-      "./js/generator.js": "./js/generator.js?v=3",
-      "./js/guide.js": "./js/guide.js?v=3",
-      "./js/linkplay.js": "./js/linkplay.js?v=3",
-      "./js/players.js": "./js/players.js?v=3",
-      "./js/preview.js": "./js/preview.js?v=3",
-      "./js/session.js": "./js/session.js?v=3",
-      "./js/strategy.js": "./js/strategy.js?v=3"
+      "./js/board.js": "./js/board.js?v=4",
+      "./js/draw.js": "./js/draw.js?v=4",
+      "./js/generator.js": "./js/generator.js?v=4",
+      "./js/map-catalog.js": "./js/map-catalog.js?v=4",
+      "./js/map-seed.js": "./js/map-seed.js?v=4",
+      "./js/scenery.js": "./js/scenery.js?v=4",
+      "./js/garden-layouts.js": "./js/garden-layouts.js?v=4",
+      "./js/guide.js": "./js/guide.js?v=4",
+      "./js/linkplay.js": "./js/linkplay.js?v=4",
+      "./js/players.js": "./js/players.js?v=4",
+      "./js/preview.js": "./js/preview.js?v=4",
+      "./js/session.js": "./js/session.js?v=4",
+      "./js/strategy.js": "./js/strategy.js?v=4"
     } }
   </script>
-  <script type="module" src="./js/app.js?v=3"></script>
+  <script type="module" src="./js/app.js?v=4"></script>
 </body>
 </html>

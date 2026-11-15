@@ -1,4 +1,5 @@
 import { freshSeed, generateBoard } from './generator.js';
+import { normalizeMapSeed } from './map-seed.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
 
 const classicVariants = new Set(['green', 'redblue', 'mixed']);
@@ -35,17 +36,18 @@ export function normalizePlayers(players, firstSide = 'blue', opponent = 'local'
   return seats;
 }
 
-function supportsBoard(version, variant, difficulty) {
-  if (version === 3) return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
+export function supportsBoard(version, variant, difficulty) {
+  if (version === 3 || version === 4) return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
   return (version === 1 || version === 2) && classicVariants.has(variant) && classicSizes.has(difficulty);
 }
 
 function openingPosition(config, boardVersion, newMatch) {
-  const { seed, variant = 'green', difficulty = boardVersion === 3 ? 'expert' : 'standard', opponent = 'local', seat,
-    firstSide = 'blue', players, matchId, timed = boardVersion === 3 } = config;
+  const { variant = 'green', difficulty = boardVersion >= 3 ? 'expert' : 'standard', opponent = 'local', seat,
+    firstSide = 'blue', players, matchId, timed = boardVersion >= 3 } = config;
+  const seed = boardVersion === 4 ? normalizeMapSeed(config.seed) : config.seed;
   if (typeof seed !== 'string' || seed.length > 256 || !supportsBoard(boardVersion, variant, difficulty) ||
       !opponents.has(opponent) || !sides.includes(firstSide) || (seat !== undefined && !sides.includes(seat)) ||
-      typeof timed !== 'boolean' || (boardVersion === 3 && !timed) ||
+      typeof timed !== 'boolean' || (boardVersion >= 3 && !timed) ||
       (matchId !== undefined && (typeof matchId !== 'string' || !matchIdPattern.test(matchId)))) {
     throw new Error('Invalid match configuration.');
   }
@@ -72,7 +74,7 @@ function openingPosition(config, boardVersion, newMatch) {
   return game;
 }
 
-export function createGame({ boardVersion = 3, ...config }) {
+export function createGame({ boardVersion = 4, ...config }) {
   return openingPosition(config, boardVersion, true);
 }
 
@@ -172,10 +174,11 @@ export function undoTurn(game) {
 }
 
 export function matchKey({
-  seed, variant, difficulty, boardVersion = 1, timed = boardVersion === 3, firstSide = 'blue', players, opponent = 'local', matchId,
+  seed, variant, difficulty, boardVersion = 1, timed = boardVersion >= 3, firstSide = 'blue', players, opponent = 'local', matchId,
 }) {
   const seats = normalizePlayers(players, firstSide, opponent);
-  return JSON.stringify([variant, difficulty, seed, boardVersion, timed, firstSide, seats.blue, seats.red, matchId ?? null]);
+  const map = boardVersion === 4 ? normalizeMapSeed(seed) : seed;
+  return JSON.stringify([variant, difficulty, map, boardVersion, timed, firstSide, seats.blue, seats.red, matchId ?? null]);
 }
 
 function isPrefix(shorter, longer) {

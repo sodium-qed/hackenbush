@@ -1,10 +1,10 @@
 import { botanicalGarden } from './garden-layouts.js';
+import { composeMap } from './map-catalog.js';
 
 const GROUND_Y = 244;
 const LEFT = 35;
 const RIGHT = 865;
 const MAX_RISE = 209;
-const SEED_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 
 // A point is [x, height above ground]. Each path traces adjoining edges.
 function motif(points, paths) {
@@ -544,16 +544,24 @@ function networkForSeed(label, size) {
   return growNetwork(reserve, size);
 }
 
-export function generateBoard(seed = 'GROVE7', variant = 'green', difficulty = 'expert', boardVersion = 3) {
-  if (boardVersion === 1 || boardVersion === '1') return legacyBoard(seed, variant, difficulty);
-  const label = String(seed);
-  if (boardVersion !== 2 && boardVersion !== '2') {
+export function generateBoard(seed, variant = 'green', difficulty = 'expert', boardVersion = 4) {
+  if (boardVersion === 4 || boardVersion === '4') {
+    const map = composeMap(seed === undefined ? 'A35D7E' : seed, randomSource);
+    const colors = variant === 'redblue' ? 'redblue' : 'green';
+    colorNetwork(map, randomSource(JSON.stringify([4, map.mapSeed, colors])), colors);
+    return { nodes: map.nodes, edges: map.edges, family: map.family, height: map.height,
+      groundY: map.groundY, mapSeed: map.mapSeed, landmarks: map.landmarks };
+  }
+  const label = seed === undefined ? 'GROVE7' : String(seed);
+  if (boardVersion === 1 || boardVersion === '1') return legacyBoard(label, variant, difficulty);
+  if (boardVersion === 3 || boardVersion === '3') {
     const garden = botanicalGarden(label, randomSource);
     const colors = variant === 'redblue' ? 'redblue' : 'green';
     colorNetwork(garden, randomSource(JSON.stringify([3, label, colors])), colors);
     return { nodes: garden.nodes, edges: garden.edges, family: garden.family,
       height: garden.height, groundY: garden.groundY };
   }
+  if (boardVersion !== 2 && boardVersion !== '2') throw new RangeError('Unknown board version.');
   const size = Object.hasOwn(NETWORK_SIZES, difficulty) ? difficulty : 'standard';
   const colors = variant === 'redblue' || variant === 'mixed' ? variant : 'green';
   const network = networkForSeed(label, size);
@@ -562,11 +570,11 @@ export function generateBoard(seed = 'GROVE7', variant = 'green', difficulty = '
 }
 
 export function freshSeed() {
-  const bytes = new Uint8Array(6);
+  const bytes = new Uint8Array(3);
   if (globalThis.crypto?.getRandomValues) {
     globalThis.crypto.getRandomValues(bytes);
   } else {
     for (let index = 0; index < bytes.length; index++) bytes[index] = Math.floor(Math.random() * 256);
   }
-  return Array.from(bytes, value => SEED_ALPHABET[value % SEED_ALPHABET.length]).join('');
+  return Array.from(bytes, value => value.toString(16).padStart(2, '0')).join('').toUpperCase();
 }

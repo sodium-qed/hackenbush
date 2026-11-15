@@ -2,7 +2,7 @@
 
 **[Play Hackenbush in your browser](https://sodium-qed.github.io/hackenbush/)**
 
-Play **Green Hackenbush** or **Red–Blue Hackenbush** in a randomly generated Expert garden. Each player has 10 seconds per turn to cut one eligible branch.
+Play **Green Hackenbush** or **Red–Blue Hackenbush** on any of **16,777,216** seeded Expert maps. Each player has 10 seconds per turn to cut one eligible branch.
 
 ![A Hackenbush match in the browser](media/hackenbush-table.jpg)
 
@@ -17,11 +17,26 @@ Play **Green Hackenbush** or **Red–Blue Hackenbush** in a randomly generated E
 
 Click or tap a branch. On a keyboard, tab to the board, use the arrow keys to select a branch, and press Enter or Space to cut it. A player who starts a turn with no eligible branch loses, even if other branches are standing. If the clock reaches zero, the active player loses even with a legal cut available. The clock keeps running in a background tab and while **How to play** is open.
 
-## Read the garden
+## Play a map by seed
 
-The Expert board families are **Wildflower meadow**, **Orchard grove**, **Vine trellis**, and **Interwoven garden**. After a cut, every branch that loses its path to the ground falls. A tree may depend on a single trunk. A trellis with two supports can survive the loss of one. Flower petals form loops of cuttable branches, and several figures can share a stem or support. Follow the whole path, including branches of the other color.
+Each of the six hexadecimal digits picks one playable landmark, in order from left to right. There are 16 choices in each slot, giving 16⁶ different ordered layouts. All six digits also shape the scenery and its framing. The 16 illustrated settings range from glacial fjords to moonlit estuaries.
 
-Open **How to play** to try cutting a support or opening one side of a petal. **New game** gives you a new garden. **Rematch** returns to the same garden for another draw.
+Try the [wildflower meadow A35D7E](https://sodium-qed.github.io/hackenbush/?seed=A35D7E), then change the final digit to visit the [lily pond A35D7F](https://sodium-qed.github.io/hackenbush/?seed=A35D7F). The last landmark changes from a saguaro cactus to a sunflower. Cutting through a cactus arm and opening a flower loop have different consequences.
+
+| Digit | Landmark | Digit | Landmark |
+| --- | --- | --- | --- |
+| 0 | Willow | 8 | Suspension bridge |
+| 1 | Bamboo | 9 | Windmill |
+| 2 | Fiddlehead fern | A | Glasshouse |
+| 3 | Mangrove | B | Stone aqueduct |
+| 4 | Waterwheel | C | Spiderweb |
+| 5 | Water lily | D | Mushroom colony |
+| 6 | Reed bed | E | Saguaro cactus |
+| 7 | Coral fan | F | Sunflower |
+
+Open **Map seed** during setup to enter a code, or leave it blank for a random map. **Rematch** deals new seats on the same map. During a match, select **Seed** beneath the board to share that layout with fresh players and clocks.
+
+After a cut, every branch that loses its path to the ground falls. Trace both colors through loops and shared supports before cutting. Open **How to play** to try a support cut or open one side of a petal.
 
 ## Play on two devices
 

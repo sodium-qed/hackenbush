@@ -175,7 +175,6 @@ export function createPlayers(container, { onStart, onChange } = {}) {
     if (!form.reportValidity()) return;
     const config = pending();
     onChange?.(config);
-    close();
     onStart?.(config);
   });
 
