@@ -204,6 +204,25 @@ body:not([data-phase="ready"]) .hero-specs, body:not([data-phase="ready"]) .hero
 .variant[aria-pressed="true"] .choice-mark { background: #365941; border-color: #365941; }
 .variant[aria-pressed="true"] .choice-mark .icon { display: block; }
 .seed-entry { margin: 12px var(--gutter) 0; border: 1px solid #d8d0bb; border-radius: 5px; background: #f7f4e9; }
+.board-source {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start;
+  gap: 8px; margin: 12px var(--gutter) 0;
+}
+.board-source .seed-entry { min-width: 0; margin: 0; }
+.board-source .seed-summary { text-align: right; }
+.builder-launch { min-height: 42px; border-color: #c3c9b1; background: #edf1e4; }
+.custom-selection {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 3px 10px;
+  min-height: 42px; padding: 6px 12px; border: 1px solid #b6c4a6; border-radius: 5px; background: #f0f3e7;
+}
+.custom-selection strong, .custom-selection small { display: block; overflow-wrap: anywhere; }
+.custom-selection strong { font-size: 13px; }
+.custom-selection small { color: var(--secondary); font-size: 11px; }
+.custom-selection .rules-help { text-decoration: underline; text-underline-offset: 3px; }
+@media (max-width: 560px) {
+  .board-source { grid-template-columns: minmax(0, 1fr); gap: 5px; }
+  .builder-launch { justify-self: start; }
+}
 .seed-entry summary, .seed-label, .seed-summary { display: flex; align-items: center; gap: 8px; }
 .seed-entry summary { justify-content: space-between; min-height: 40px; padding: 7px 13px; cursor: pointer; list-style: none; }
 .seed-entry summary::-webkit-details-marker, .history-panel summary::-webkit-details-marker { display: none; }
@@ -295,6 +314,8 @@ body:not([data-phase="ready"]) .hero-specs, body:not([data-phase="ready"]) .hero
 .result-mark { flex: none; width: 52px; height: 52px; padding: 10px; border: 1px solid #8a713f; color: #645323; border-radius: 50%; }
 .turn-share { margin-top: 14px; border-color: #b6bf91; background: #e4ebc9; color: #25452f; }
 .turn-share:hover { background: #f1f4de; }
+.turn-share.analyze-game { border-color: #294d39; background: var(--forest); color: #fff8df; }
+.turn-share.analyze-game:hover { background: #315c44; }
 .turn-share .icon { width: 16px; height: 16px; }
 
 .section-top, .history-heading, .history-meta { display: flex; align-items: center; gap: 10px; }

@@ -39,7 +39,12 @@ function fixture(t, { store = new Map(), blockedStorage = false, audio = true, h
     return { getItem: key => store.get(key) ?? null, setItem: (key, value) => store.set(key, value) };
   } });
   function param() {
-    return { setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {}, setTargetAtTime() {} };
+    return {
+      setValueAtTime(value) { this.start = value; },
+      linearRampToValueAtTime() {},
+      exponentialRampToValueAtTime(value) { this.end = value; },
+      setTargetAtTime() {}
+    };
   }
   if (audio) view.AudioContext = class extends Surface {
     state = holdResume ? 'suspended' : 'running';
@@ -47,18 +52,25 @@ function fixture(t, { store = new Map(), blockedStorage = false, audio = true, h
     sampleRate = 24000;
     destination = {};
     started = [];
+    nodes = [];
     constructor() { super(); contexts.push(this); }
     node(type) {
       const node = {
-        type, gain: param(), frequency: param(), Q: param(), pan: param(), connected: false,
+        kind: type, gain: param(), frequency: param(), Q: param(), pan: param(), connected: false,
         connect() { this.connected = true; },
         disconnect() { this.connected = false; },
         start: (time = 0) => { node.startTime = time; this.started.push(node); },
         stop(time) { this.stopTime = time; }
       };
+      this.nodes.push(node);
       return node;
     }
     createGain() { return this.node('gain'); }
+    createDynamicsCompressor() {
+      const node = this.node('compressor');
+      for (const key of ['threshold', 'knee', 'ratio', 'attack', 'release']) node[key] = param();
+      return node;
+    }
     createOscillator() { return this.node('oscillator'); }
     createStereoPanner() { return this.node('stereo'); }
     createBufferSource() { return this.node('noise'); }
@@ -82,7 +94,8 @@ function fixture(t, { store = new Map(), blockedStorage = false, audio = true, h
   const dialog = new Surface();
   const button = new Surface();
   const icon = new Surface();
-  const controls = Object.fromEntries(['close', 'effects', 'ambience', 'volume', 'test', 'unavailable', 'reading'].map(name => [name, new Surface()]));
+  const controls = Object.fromEntries(['close', 'effects', 'ambience', 'volume', 'sample', 'test', 'unavailable', 'reading'].map(name => [name, new Surface()]));
+  controls.sample.value = 'leaf';
   dialog.id = 'sound-dialog';
   dialog.ownerDocument = doc;
   dialog.querySelector = selector => controls[selector.match(/"([a-z]+)"/)[1]];
@@ -132,6 +145,82 @@ test('trusted input unlocks sound once, then cuts scale with the detached mass a
   const timeout = count(() => api.end({ timedOut: true }));
   assert.ok(timeout > 0 && timeout < count(() => api.end({ timedOut: false })));
   for (const source of ctx.started) assert.ok(source.stopTime > source.startTime);
+});
+
+test('cuts use the material of the board part and keep its location intelligible in stereo and mono', t => {
+  const h = fixture(t);
+  h.gesture();
+  const [ctx] = h.contexts;
+  function cut(part, position) {
+    const before = ctx.started.length;
+    h.api.cut({ part, position });
+    const sources = ctx.started.slice(before);
+    const tones = sources.filter(node => node.kind === 'oscillator');
+    const duration = Math.max(...sources.map(node => node.stopTime)) - Math.min(...sources.map(node => node.startTime));
+    return { tones, duration, pan: ctx.nodes.filter(node => node.kind === 'stereo').at(-1)?.pan.value };
+  }
+  const leaf = cut('bamboo leaf margin', -1);
+  const wood = cut('paddle');
+  const glass = cut('glass roof', 4);
+  const stone = cut('rock seam');
+  const metal = cut('suspension cable');
+  assert.equal(leaf.tones.length, 0);
+  assert.ok(wood.tones.length && wood.tones[0].frequency.end / wood.tones[0].frequency.start < .8);
+  assert.ok(stone.tones.length > wood.tones.length && stone.duration < .2);
+  assert.ok(glass.duration > .4 && glass.tones.every(note => note.frequency.end / note.frequency.start > .98));
+  assert.ok(metal.duration > glass.duration && metal.tones[0].frequency.start < glass.tones[0].frequency.start * .6);
+  assert.ok(leaf.pan < 0 && leaf.pan > -.75);
+  assert.equal(wood.pan, 0);
+  assert.equal(glass.pan, -leaf.pan);
+  for (const source of ctx.started) source.onended?.();
+  assert.deepEqual(ctx.nodes.filter(node => node.connected).map(node => node.kind), ['gain', 'compressor']);
+  ctx.createStereoPanner = undefined;
+  assert.equal(cut('glasshouse foundation', .8).tones.length, stone.tones.length);
+});
+
+test('previews play only on request, replace each other and leave live match cues audible', t => {
+  const h = fixture(t);
+  h.gesture();
+  const [ctx] = h.contexts;
+  h.args.button.emit('click');
+  h.controls.sample.value = 'glass';
+  h.controls.sample.emit('change');
+  assert.equal(ctx.started.length, 0);
+  h.controls.test.emit('click');
+  const glass = ctx.started.slice();
+  h.api.reveal();
+  const reveal = ctx.started.slice(glass.length);
+  const stops = reveal.map(source => source.stopTime);
+  h.controls.sample.value = 'cascade';
+  h.controls.test.emit('click');
+  assert.ok(glass.every(source => source.stopTime <= ctx.currentTime + .03));
+  assert.deepEqual(reveal.map(source => source.stopTime), stops);
+  const falling = ctx.started.slice(glass.length + reveal.length);
+  assert.ok(falling.some(source => source.startTime > ctx.currentTime + .3));
+  h.controls.close.emit('click');
+  assert.ok(falling.every(source => source.stopTime <= ctx.currentTime + .03));
+  assert.deepEqual(reveal.map(source => source.stopTime), stops);
+  h.controls.volume.value = '0';
+  h.controls.volume.emit('input');
+  assert.equal(h.controls.test.disabled, true);
+  const before = ctx.started.length;
+  h.controls.test.emit('click');
+  assert.equal(ctx.started.length, before);
+});
+
+test('the win arpeggio follows the last landing and rapid cuts keep active voices bounded', t => {
+  const h = fixture(t);
+  h.gesture();
+  const [ctx] = h.contexts;
+  h.api.cut({ part: 'trunk', fallen: 40 });
+  const lastDebris = Math.max(...ctx.started.filter(node => node.kind === 'oscillator').map(node => node.startTime));
+  const before = ctx.started.length;
+  h.api.end();
+  assert.ok(Math.min(...ctx.started.slice(before).map(node => node.startTime)) > lastDebris + .1);
+  for (let i = 0; i < 22; i++) h.api.cut({ part: 'stone arch', fallen: 50, position: .9 });
+  assert.ok(ctx.nodes.filter(node => node.kind === 'stereo' && node.connected).length <= 12);
+  h.api.destroy();
+  assert.ok(ctx.nodes.every(node => !node.connected));
 });
 
 test('settings persist independently, and background audio stops on hide, cache parking, or teardown', async t => {

@@ -2,14 +2,14 @@
 
 **[Play Hackenbush in your browser](https://sodium-qed.github.io/hackenbush/)**
 
-Play **Green Hackenbush** or **Red–Blue Hackenbush** on any of **16,777,216** seeded Expert maps. Each player has 10 seconds per turn to cut one eligible branch.
+Play **Green Hackenbush** or **Red–Blue Hackenbush** on any of **16,777,216** seeded Expert maps or draw your own board. Each player has 10 seconds per turn to cut one eligible branch.
 
 ![A Hackenbush match in the browser](media/hackenbush-table.jpg)
 
 ## Start a match
 
 1. Choose the rules. In Green, either player can cut any branch. In Red–Blue, Blue cuts blue branches and Red cuts red branches.
-2. Before seeing the board, enter the human players’ names. On one device, choose a human or computer controller for each entrant. Computers can use their suggested nicknames.
+2. Before seeing the board, enter the human players’ names. On one device, choose a human or computer controller for each entrant. Each computer has its own difficulty. Easy picks a random legal branch, Standard looks for immediate wins and replies, and Expert uses the game's strongest search.
 3. Select **Draw seats & reveal**. In Red–Blue, one random draw assigns the colors and an independent draw chooses who opens. In Green, only the opener is drawn.
 4. The assignments and board appear together for a two-second opening look. Play then starts automatically with 10 seconds for the opener.
 
@@ -25,11 +25,19 @@ For comparison, [A35D7E](https://sodium-qed.github.io/hackenbush/?seed=A35D7E&v=
 
 Open **Map seed** before drawing seats, or leave it blank to draw a map. The random deal visits each code once per cycle on the same browser. **Rematch** draws fresh seats on the same board. Use **Seed** under a revealed board to share its layout. Turn links also carry the generator version and the moves already played. Toggle **Scenery** beneath the board to switch between the illustrated landscape and plain paper.
 
+## Build a board
+
+Choose a ruleset and select **Build a board** in match setup. Connect dots to draw branches, choose their color in Red–Blue, and connect every branch to the ground line. Give the board a name and select **Use this board** to bring it to the table. A custom board works with local players, computer opponents, rematches, and turn links. **Share board** opens the starting layout for a fresh match.
+
+## Review a finished match
+
+Select **Analyze game** on the winner's card to revisit the opening or any cut. Green positions display a nimber. Red–Blue positions display a signed value or certified bounds when the exact value takes longer to compute. The analysis describes perfect play without the turn clock, including when a timeout ended the actual match.
+
 ## Practice, color, and sound
 
-Try the sunflower in the untimed **Practice garden** before drawing seats. Open the edge of a petal to see its color peel away. Cut through its last support to see intact petals fall with the flower head. Red and blue ownership stays visible on the outlines. **How to play** lets you try a single support, two supports, and a petal loop.
+Try the sunflower in the untimed **Practice garden** before drawing seats. Open the edge of a petal to see its color peel away. Cut through its last support to see intact petals fall with the flower head. Red and blue ownership stays visible on the outlines. **How to play** lets you predict what falls from a single support, two supports or a petal loop, then play a three-branch endgame against the computer.
 
-Open **Sound** in the top bar to adjust cut and end-of-match effects or turn on the garden ambience. The settings are remembered on this device.
+Open **Sound** in the top bar to preview a leaf snip, wood snap, glass ping, stone chip, cable twang, falling branches, or a match cue. Adjust the volume or turn on garden ambience. The settings are remembered on this device.
 
 ## Play on two devices
 

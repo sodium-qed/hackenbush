@@ -2,6 +2,14 @@ const preferencesKey = 'groundwork.hackenbush.sound.v1';
 const defaults = { effects: true, ambience: false, volume: 65 };
 const mounted = new WeakMap();
 
+function materialOf(part) {
+  if (/stone|rock|ridgeline|masonry|brick|foundation|aqueduct|coral/i.test(part)) return 'stone';
+  if (/metal|iron|steel|wire|chain|cable|hanger|mullion|glazing bar|glasshouse (sill|column)/i.test(part)) return 'metal';
+  if (/glass|glazing|pane|window/i.test(part)) return 'glass';
+  if (/leaf|petal|flower center|stamen|lily pad|cactus pad|frond|pinna|fern|vein|reed|cattail|blade|needle|canopy|crown|tassel|silk|web|plume|spray|trailing plant|gill|canvas sail/i.test(part)) return 'leaf';
+  return 'wood';
+}
+
 function readPreferences(view) {
   try {
     const saved = JSON.parse(view.localStorage.getItem(preferencesKey));
@@ -18,9 +26,21 @@ function readPreferences(view) {
 function gardenSounds(context, view) {
   const master = context.createGain();
   master.gain.value = 0;
-  master.connect(context.destination);
-  const effects = new Map();
+  // Leave individual cues alone and catch the peaks of overlapping cuts.
+  const limiter = context.createDynamicsCompressor?.();
+  if (limiter) {
+    limiter.threshold.value = -5;
+    limiter.knee.value = 2;
+    limiter.ratio.value = 12;
+    limiter.attack.value = .002;
+    limiter.release.value = .10;
+    master.connect(limiter);
+    limiter.connect(context.destination);
+  } else master.connect(context.destination);
+  const effects = new Set();
   const birds = new Map();
+  let preview;
+  let lastLanding = 0;
   let breeze;
   let birdTimer;
   let fadeTimer;
@@ -45,7 +65,7 @@ function gardenSounds(context, view) {
     return source;
   }
 
-  function voice(bank, nodes, start, duration, peak, attack, offset) {
+  function voice(bank, nodes, start, duration, peak, attack, { offset, output = master, onEnd } = {}) {
     const source = nodes[0];
     const envelope = context.createGain();
     const gain = envelope.gain;
@@ -56,11 +76,12 @@ function gardenSounds(context, view) {
     gain.linearRampToValueAtTime(0, start + duration + .008);
     nodes.push(envelope);
     for (let i = 1; i < nodes.length; i++) nodes[i - 1].connect(nodes[i]);
-    envelope.connect(master);
+    envelope.connect(output);
     const release = () => {
       source.onended = null;
       bank.delete(source);
       for (const node of nodes) node.disconnect();
+      onEnd?.();
     };
     bank.set(source, release);
     source.onended = release;
@@ -69,76 +90,180 @@ function gardenSounds(context, view) {
     source.stop(start + duration + .009);
   }
 
-  function scatter(start, duration, frequency, finish, peak, attack = .004) {
-    const filter = context.createBiquadFilter();
-    filter.type = 'bandpass';
-    filter.Q.value = .82;
-    filter.frequency.setValueAtTime(frequency, start);
-    filter.frequency.exponentialRampToValueAtTime(finish, start + duration);
-    voice(effects, [noiseSource(), filter], start, duration, peak, attack, random() * noise.duration);
-  }
-
-  function tone(start, duration, frequency, finish, peak, type = 'sine') {
-    const oscillator = context.createOscillator();
-    oscillator.type = type;
-    oscillator.frequency.setValueAtTime(frequency, start);
-    oscillator.frequency.exponentialRampToValueAtTime(finish, start + duration);
-    voice(effects, [oscillator], start, duration, peak, .004);
-  }
-
-  function cut({ part = '', fallen = 0 } = {}) {
-    const start = context.currentTime + .008;
-    const variation = .94 + random() * .12;
-    const leafy = /petal|leaf|lily pad|frond|reed|vein|silk|web|plume|spray|plant|gill/i.test(part);
-    const hard = /glass|stone|glazing|chain|cable/i.test(part);
-
-    // A blade brushing past its mate, followed by the sound of the material.
-    scatter(start, .044, 3800 * variation, 1550, .54);
-    scatter(start + .026, leafy ? .10 : .055, (leafy ? 2700 : 1850) * variation, 820, leafy ? .42 : .51);
-    const body = (leafy ? 640 : hard ? 820 : 380) * variation;
-    tone(start + .026, hard ? .105 : .07, body, body * (hard ? .96 : .61), leafy ? .065 : .14, 'triangle');
-
-    if (!Number.isFinite(fallen) || fallen < 1) return;
-    const weight = Math.min(1, Math.log2(fallen + 1) / 5);
-    const layers = 1 + Math.ceil(weight * 4);
-    const landing = start + .26 + weight * .14;
-    for (let i = 0; i < layers; i++) {
-      const time = start + .078 + i * .046 + random() * .019;
-      scatter(time, .095 + weight * .095, 2350 + random() * 720, 870, .15 + weight * .18, .014);
-    }
-    scatter(landing, .13 + weight * .09, 750 - weight * 250, 275, .32 + weight * .20);
-    tone(landing, .12 + weight * .12, 183 - weight * 50, 87 - weight * 18, .10 + weight * .13);
-  }
-
-  // A wooden tine with a short-lived, inharmonic overtone.
-  function pluck(start, frequency, duration, level) {
-    tone(start, duration, frequency * 1.004, frequency, level);
-    tone(start, duration * .32, frequency * 2.72, frequency * 2.68, level * .24);
-  }
-
-  function reveal() {
-    const now = context.currentTime + .012;
-    pluck(now, 293.66, .42, .19);
-    pluck(now + .15, 440, .59, .15);
-  }
-
-  function end({ timedOut = false } = {}) {
-    const now = context.currentTime + (timedOut ? .028 : .31);
-    if (timedOut) {
-      pluck(now, 293.66, .32, .17);
-      pluck(now + .19, 220, .64, .15);
-    } else {
-      pluck(now, 369.99, .44, .17);
-      pluck(now + .135, 440, .46, .16);
-      pluck(now + .32, 587.33, .72, .15);
-    }
-  }
-
   function stopVoices(bank) {
     for (const [source, release] of bank) {
       source.stop();
       release();
     }
+  }
+
+  // One output per cue keeps all its layers together on the board and lets a
+  // second preview fade the first without silencing an actual match result.
+  function instrument(position, isPreview) {
+    const sources = new Map();
+    const output = context.createGain();
+    const pan = Number.isFinite(position) ? (Math.min(1, Math.max(0, position)) - .5) * .8 : 0;
+    const panner = context.createStereoPanner?.();
+    if (panner) {
+      panner.pan.value = pan;
+      output.connect(panner);
+      panner.connect(master);
+    } else output.connect(master);
+    const now = context.currentTime + .008;
+    const group = {
+      stop() { stopVoices(sources); },
+      fade() {
+        output.gain.setTargetAtTime(0, context.currentTime, .004);
+        for (const source of sources.keys()) source.stop(context.currentTime + .025);
+      }
+    };
+    // Repeated input can arrive faster than a ring's decay.
+    if (effects.size >= 12) effects.values().next().value.stop();
+    effects.add(group);
+    if (isPreview) preview = group;
+
+    function onEnd() {
+      if (sources.size) return;
+      output.disconnect();
+      panner?.disconnect();
+      effects.delete(group);
+      if (preview === group) preview = undefined;
+    }
+    function tone(at, duration, from, to, peak, type = 'sine') {
+      const start = now + at;
+      const source = context.createOscillator();
+      source.type = type;
+      source.frequency.setValueAtTime(from, start);
+      source.frequency.exponentialRampToValueAtTime(to, start + duration);
+      voice(sources, [source], start, duration, peak, .003, { output, onEnd });
+    }
+    function brush(at, duration, from, to, peak, attack = .003, resonance = .82) {
+      const start = now + at;
+      const filter = context.createBiquadFilter();
+      filter.type = 'bandpass';
+      filter.Q.value = resonance;
+      filter.frequency.setValueAtTime(from, start);
+      filter.frequency.exponentialRampToValueAtTime(to, start + duration);
+      voice(sources, [noiseSource(), filter], start, duration, peak, attack,
+        { offset: random() * noise.duration, output, onEnd });
+    }
+    return { tone, brush };
+  }
+
+  function stopPreview() {
+    preview?.fade();
+    preview = undefined;
+  }
+
+  function cutMaterial({ tone, brush }, material, pitch) {
+    // The blades slide past each other before the material releases.
+    brush(0, .037, 1550 * pitch, 4100 * pitch, .32, .008);
+    switch (material) {
+      case 'leaf':
+        // Two light, papery flutters after the nip.
+        brush(.024, .049, 3900 * pitch, 1750, .56, .002, .67);
+        brush(.057, .061, 2210, 3900 * pitch, .34, .009);
+        brush(.102, .045, 3450 * pitch, 1400, .16, .006);
+        break;
+      case 'wood':
+        // Fibres crack apart around a short, hollow knock.
+        brush(.023, .028, 1700 * pitch, 900, .68, .001, .55);
+        tone(.024, .135, 349 * pitch, 219 * pitch, .23, 'triangle');
+        tone(.024, .064, 835 * pitch, 675 * pitch, .11);
+        brush(.044, .048, 3650 * pitch, 1340, .36, .001);
+        break;
+      case 'glass':
+        brush(.021, .031, 4950 * pitch, 2480, .33, .001);
+        tone(.022, .46, 991 * pitch, 988 * pitch, .21);
+        tone(.022, .27, 2514 * pitch, 2509 * pitch, .115);
+        tone(.022, .13, 3790 * pitch, 3780 * pitch, .056);
+        tone(.094, .15, 1670 * pitch, 1662 * pitch, .048);
+        break;
+      case 'stone':
+        brush(.022, .070, 1360 * pitch, 615, .64, .001, .54);
+        tone(.022, .099, 563 * pitch, 485 * pitch, .21, 'triangle');
+        tone(.023, .073, 1036 * pitch, 920 * pitch, .12);
+        brush(.081, .051, 2850 * pitch, 1330, .39, .001, .64);
+        tone(.082, .052, 937 * pitch, 862 * pitch, .078);
+        break;
+      case 'metal':
+        // Tension drops as the cable rings. Glass holds its pitch.
+        brush(.020, .055, 2340 * pitch, 708, .40, .002);
+        tone(.021, .61, 477 * pitch, 416 * pitch, .20, 'triangle');
+        tone(.021, .39, 1338 * pitch, 1240 * pitch, .12);
+        tone(.021, .24, 2180 * pitch, 2023 * pitch, .071);
+        tone(.068, .11, 1048 * pitch, 836 * pitch, .054);
+        break;
+    }
+  }
+
+  function cascade({ tone, brush }, count) {
+    const weight = Math.min(1, Math.log2(count + 1) / 5);
+    const pieces = 1 + Math.ceil(weight * 4);
+    const flight = .14 + weight * .27;
+    for (let i = 0; i < pieces; i++) {
+      const progress = (i + .4) / pieces;
+      const at = .072 + flight * Math.sqrt(progress) + random() * .014;
+      brush(at, .095 + weight * .044, 3700 - progress * 1300 + 230 * random(), 1010,
+        .20 + .14 * weight, .009 + random() * .006);
+      if (i % 2 === 1) tone(at + .008, .045, 930 - 340 * progress, 565, .055, 'triangle');
+    }
+    const landing = .10 + flight;
+    brush(landing, .10 + weight * .10, 880 - weight * 230, 235, .36 + weight * .28, .003, .60);
+    tone(landing, .13 + weight * .16, 212 - weight * 59, 97 - weight * 33, .095 + weight * .17);
+    // A few lighter pieces settle after the main impact.
+    if (pieces > 2) {
+      brush(landing + .065, .073, 1980, 830, .27);
+      brush(landing + .132, .061, 1510, 610, .16);
+    }
+    return landing;
+  }
+
+  function cut(sound, { part = '', fallen = 0 }, isPreview) {
+    cutMaterial(sound, materialOf(part), .94 + random() * .12);
+    const landing = Number.isFinite(fallen) && fallen >= 1 ? cascade(sound, fallen) : .02;
+    if (!isPreview) lastLanding = context.currentTime + landing;
+  }
+
+  function pluck({ tone }, at, frequency, duration, level) {
+    tone(at, duration, frequency * 1.004, frequency, level);
+    tone(at, duration * .36, frequency * 2.73, frequency * 2.68, level * .28);
+  }
+
+  function reveal(sound) {
+    pluck(sound, 0, 293.66, .38, .18);
+    pluck(sound, .14, 440, .54, .16);
+  }
+
+  function end(sound, { timedOut = false }, isPreview) {
+    if (timedOut) {
+      // A dry tick-tock, then two low settling notes.
+      for (const [at, hz] of [[0, 1080], [.148, 795]]) {
+        sound.brush(at, .026, 1900, 980, .40, .001);
+        sound.tone(at, .047, hz, hz * .80, .13, 'triangle');
+      }
+      pluck(sound, .30, 220, .36, .17);
+      pluck(sound, .51, 146.83, .68, .19);
+      return;
+    }
+    // Leave room for the final branch to land before the ascending D major arpeggio.
+    const at = isPreview ? 0 : Math.max(.12, lastLanding + .12 - context.currentTime);
+    pluck(sound, at, 293.66, .41, .16);
+    pluck(sound, at + .13, 369.99, .40, .16);
+    pluck(sound, at + .26, 440, .44, .17);
+    pluck(sound, at + .43, 587.33, .76, .18);
+    pluck(sound, at + .44, 293.66, .68, .10);
+  }
+
+  const cues = { cut, reveal, end };
+  function play(cue, data = {}, isPreview = false) {
+    if (isPreview || cue === 'end') stopPreview();
+    cues[cue](instrument(data.position, isPreview), data, isPreview);
+  }
+
+  function stopEffects() {
+    for (const group of effects) group.stop();
+    lastLanding = 0;
   }
 
   function callFromTree(start, hz, pan) {
@@ -223,12 +348,23 @@ function gardenSounds(context, view) {
   }
 
   return {
-    cut, reveal, end, ambience,
+    play, ambience, stopEffects, stopPreview,
     volume(value) { master.gain.setTargetAtTime((value / 100) ** 1.45 * .92, context.currentTime, .016); },
-    stopEffects() { stopVoices(effects); },
-    destroy() { stopVoices(effects); ambience(false, true); master.disconnect(); }
+    destroy() { stopEffects(); ambience(false, true); master.disconnect(); limiter?.disconnect(); }
   };
 }
+
+const previewCues = {
+  leaf: { label: 'Leaf snip', cue: 'cut', data: { part: 'leaf' } },
+  wood: { label: 'Branch snap', cue: 'cut', data: { part: 'branch' } },
+  glass: { label: 'Glass ping', cue: 'cut', data: { part: 'glass roof' } },
+  stone: { label: 'Stone chip', cue: 'cut', data: { part: 'rock face' } },
+  metal: { label: 'Cable twang', cue: 'cut', data: { part: 'suspension cable' } },
+  cascade: { label: 'Falling branches', cue: 'cut', data: { part: 'branch', fallen: 15 } },
+  reveal: { label: 'First-player draw', cue: 'reveal' },
+  victory: { label: 'Winning cut', cue: 'end' },
+  timeout: { label: 'Time expired', cue: 'end', data: { timedOut: true } }
+};
 
 const settingsPanel = `
   <div class="sound-sheet">
@@ -254,14 +390,20 @@ const settingsPanel = `
         <output for="sound-volume" data-audio="reading" aria-hidden="true"></output>
         <input id="sound-volume" data-audio="volume" type="range" min="0" max="100" step="1">
       </div>
-      <button class="sound-test" type="button" data-audio="test">
-        <svg class="icon" aria-hidden="true"><use href="#i-sound"></use></svg>Test cut
-      </button>
+      <div class="sound-preview">
+        <label for="sound-sample">Preview a sound</label>
+        <select id="sound-sample" data-audio="sample">
+          ${Object.entries(previewCues).map(([name, cue]) => `<option value="${name}">${cue.label}</option>`).join('')}
+        </select>
+        <button class="sound-test" type="button" data-audio="test" aria-label="Play sound preview">
+          <svg class="icon" aria-hidden="true"><use href="#i-sound"></use></svg>Play
+        </button>
+      </div>
       <p class="sound-unavailable" data-audio="unavailable" role="status" hidden>Audio is unavailable in this browser.</p>
     </div>
   </div>`;
 
-/** Play cues once per accepted action. fallen is the count of detached edges, excluding the cut edge. */
+/** A cut takes its part, its detached edge count (excluding the cut edge), and an optional left-to-right position from 0 to 1. */
 export function createAudio({ button, dialog }) {
   if (mounted.has(dialog)) return mounted.get(dialog);
   const doc = dialog.ownerDocument;
@@ -289,6 +431,7 @@ export function createAudio({ button, dialog }) {
   const effects = control('effects');
   const ambience = control('ambience');
   const volume = control('volume');
+  const sample = control('sample');
   const preview = control('test');
   const navIcon = button.querySelector('use');
 
@@ -299,7 +442,7 @@ export function createAudio({ button, dialog }) {
     volume.setAttribute('aria-valuetext', settings.volume + ' percent');
     volume.style.setProperty('--sound-volume', settings.volume + '%');
     control('reading').textContent = settings.volume + '%';
-    for (const input of [effects, ambience, volume]) input.disabled = unavailable;
+    for (const input of [effects, ambience, volume, sample]) input.disabled = unavailable;
     preview.disabled = unavailable || !settings.effects || settings.volume === 0;
     control('unavailable').hidden = !unavailable;
     const muted = unavailable || !settings.volume || (!settings.effects && !settings.ambience);
@@ -316,8 +459,8 @@ export function createAudio({ button, dialog }) {
     if (!settings.effects) sounds.stopEffects();
     sounds.ambience(settings.ambience);
     const now = view.performance.now();
-    for (const { cue, data, requested } of waitingCues) {
-      if (settings.effects && now - requested < 550) sounds[cue](data);
+    for (const { cue, data, requested, isPreview } of waitingCues) {
+      if (settings.effects && now - requested < 550) sounds.play(cue, data, isPreview);
     }
     waitingCues = [];
   }
@@ -378,17 +521,22 @@ export function createAudio({ button, dialog }) {
     else sleep();
   }
 
-  function play(cue, data) {
+  function clearPreview() {
+    waitingCues = waitingCues.filter(item => !item.isPreview);
+    sounds?.stopPreview();
+  }
+
+  function play(cue, data, isPreview = false) {
     if (!wantsAudio() || !settings.effects || !sounds) return;
     if (context.state === 'running' && !sleeping) {
-      sounds[cue](data);
+      sounds.play(cue, data, isPreview);
       return;
     }
     // Unlocking a new context can finish just after the first keyboard or touch cut.
     // Drop the cue if the tab is hidden, muted, or slow to resume.
     const requested = view.performance.now();
-    waitingCues = waitingCues.filter(item => requested - item.requested < 550);
-    waitingCues.push({ cue, data, requested });
+    waitingCues = waitingCues.filter(item => requested - item.requested < 550 && (!isPreview || !item.isPreview));
+    waitingCues.push({ cue, data, requested, isPreview });
     wake();
   }
 
@@ -420,7 +568,10 @@ export function createAudio({ button, dialog }) {
   effects.addEventListener('change', change, options);
   ambience.addEventListener('change', change, options);
   volume.addEventListener('input', change, options);
-  preview.addEventListener('click', () => play('cut', { part: 'branch', fallen: 2 }), options);
+  preview.addEventListener('click', () => {
+    const selection = previewCues[sample.value];
+    if (selection) play(selection.cue, selection.data, true);
+  }, options);
 
   button.addEventListener('click', () => {
     if (dialog.hasAttribute('open')) return;
@@ -436,6 +587,7 @@ export function createAudio({ button, dialog }) {
     if (typeof dialog.close === 'function') dialog.close();
     else {
       dialog.removeAttribute('open');
+      clearPreview();
       button.setAttribute('aria-expanded', 'false');
       button.focus({ preventScroll: true });
     }
@@ -444,7 +596,10 @@ export function createAudio({ button, dialog }) {
   dialog.addEventListener('keydown', event => {
     if (event.key === 'Escape' && typeof dialog.close !== 'function') close();
   }, options);
-  dialog.addEventListener('close', () => button.setAttribute('aria-expanded', 'false'), options);
+  dialog.addEventListener('close', () => {
+    clearPreview();
+    button.setAttribute('aria-expanded', 'false');
+  }, options);
   let pressedBackdrop = false;
   dialog.addEventListener('pointerdown', event => { pressedBackdrop = event.target === dialog; }, options);
   dialog.addEventListener('click', event => {

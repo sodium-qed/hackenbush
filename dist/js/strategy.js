@@ -2,7 +2,7 @@ import { cutEdge, legalMoves, otherSide } from './rules.js';
 
 // BigInt masks represent the complete network, including edges above bit 31.
 // Bound recursion and memory for unusually large custom positions.
-const MASK_LIMIT = 128;
+const MASK_LIMIT = 256;
 const CYCLIC_NUMBER_LIMIT = 12;
 const TIME_UP = Symbol('search deadline');
 
@@ -83,13 +83,14 @@ function prepare(board, ids) {
 // One depth-first traversal finds every legal cut's falling edges. A bridge
 // severs its entire descendant subgraph. Other cuts remove only their edge.
 // Distinct attachments at the common ground also give independent summands.
-function inspect(graph, mask) {
+function inspect(graph, mask, origin = 0) {
   const { incident, edges } = graph;
-  const entry = new Uint8Array(incident.length);
-  const low = new Uint8Array(incident.length);
+  const entry = new Uint32Array(incident.length);
+  const low = new Uint32Array(incident.length);
   const drops = new Array(edges.length);
   const parts = [];
   let time = 0;
+  let cycleRank = 0;
   let seen = 0n;
 
   function visit(v) {
@@ -135,21 +136,23 @@ function inspect(graph, mask) {
       } else {
         low[v] = Math.min(low[v], entry[w]);
         if (v === w) partNumber = withSupport(edge.color, 0);
-        else cyclic |= bit;
+        else { cyclic |= bit; cycleRank++; }
       }
 
       branchMask |= part;
       nim ^= partNim;
       number += partNumber;
       estimate += partEstimate;
-      if (v === 0) parts.push({ mask: part, nim: partNim, number: partNumber });
+      if (v === origin) parts.push({ mask: part, nim: partNim, number: partNumber });
     }
     return { mask: branchMask, nim, number, estimate, cyclic };
   }
 
-  const root = visit(0);
-  return { ...root, drops, parts };
+  const root = visit(origin);
+  return { ...root, drops, parts, cycleRank };
 }
+
+export { prepare as prepareGraph, inspect as inspectGraph };
 
 function rankedCuts(graph, mask, groups, side) {
   const other = otherSide(side);

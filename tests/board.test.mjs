@@ -9,12 +9,15 @@ import { cutEdge } from '../dist/js/rules.js';
 // checks runnable with the same dependency-free Node test suite as the game.
 function surface(t, reducedMotion = false) {
   const bounds = { left: 0, top: 0, width: 900, height: 340 };
+  const motion = new EventTarget();
+  motion.matches = reducedMotion;
   let resize;
   class Element {
     children = [];
     attrs = {};
     handlers = new Map();
-    style = { setProperty() {} };
+    animations = [];
+    style = { setProperty(key, value) { this[key] = value; } };
     classList = { toggle: (token, enabled) => {
       const list = new Set((this.attrs.class ?? '').split(' ').filter(Boolean));
       if (enabled) list.add(token);
@@ -34,6 +37,14 @@ function surface(t, reducedMotion = false) {
       return copy;
     }
     remove() { this.parent.children = this.parent.children.filter(child => child !== this); }
+    animate(frames, options) {
+      const animation = { frames, options, cancelled: false, cancel() { this.cancelled = true; } };
+      this.animations.push(animation);
+      return animation;
+    }
+    getAnimations({ subtree } = {}) {
+      return subtree ? this.descendants().flatMap(el => el.animations) : this.animations;
+    }
     descendants() { return [this, ...this.children.flatMap(child => child.descendants())]; }
     contains(element) { return this.descendants().includes(element); }
     closest(selector) { return selector === '[data-edge-id]' && this.attrs['data-edge-id'] ? this : this.parent?.closest(selector); }
@@ -47,10 +58,10 @@ function surface(t, reducedMotion = false) {
     }
   }
   globalThis.document = { createElement: tag => new Element(tag), createElementNS: (_, tag) => new Element(tag), activeElement: null };
-  globalThis.window = { setTimeout, clearTimeout, matchMedia: () => ({ matches: reducedMotion }) };
+  globalThis.window = { setTimeout, clearTimeout, matchMedia: () => motion };
   globalThis.ResizeObserver = class { constructor(cb) { resize = cb; } observe() {} disconnect() {} };
   t.after(() => { delete globalThis.document; delete globalThis.window; delete globalThis.ResizeObserver; });
-  return { root: new Element('div'), bounds, resize: () => resize() };
+  return { root: new Element('div'), bounds, motion, resize: () => resize() };
 }
 
 test('bowed edges retain distinct ink, picking, markers and motion through a phone projection', t => {
@@ -190,6 +201,119 @@ test('a practice petal peels locally and an unsupported flower head falls with a
   assert.equal(fallen.filter(el => el.attrs['data-material'] === 'seeds').length, 1);
   assert.ok(fallen.every(el => el.descendants().some(child => hasClass(child, 'hb-field__pigment'))));
   assert.equal(pieces[0].descendants().filter(el => hasClass(el, 'hb-field__stem')).length, drop.fallen.length);
+});
+
+function pose(frame) {
+  const [x, y, spin] = frame.transform.match(/-?[\d.]+/g).map(Number);
+  return { x, y, spin };
+}
+
+test('a single cut launches both actual halves, while rapid cuts, reset and reduced motion own their effects', t => {
+  const { root, motion } = surface(t);
+  const scheduled = new Map();
+  let timer = 0;
+  window.setTimeout = (run, delay) => { scheduled.set(++timer, { run, delay }); return timer; };
+  window.clearTimeout = id => scheduled.delete(id);
+  const renderer = createBoard(root);
+  const board = {
+    height: 340, groundY: 314,
+    nodes: [{ id: 'g', x: 420, y: 314, ground: true }, { id: 'fork', x: 420, y: 160 },
+      { id: 'l', x: 300, y: 70 }, { id: 'r', x: 540, y: 70 }],
+    edges: [{ id: 'base', a: 'g', b: 'fork', color: 'green' }, { id: 'left', a: 'fork', b: 'l', color: 'blue' },
+      { id: 'right', a: 'fork', b: 'r', color: 'green' }],
+  };
+  const opening = board.edges.map(edge => edge.id);
+  const update = (live, options) => renderer.update({ board, live, side: 'blue', ...options });
+  const effects = root.descendants().find(el => el.attrs.class === 'hb-field__effects');
+  try {
+    update(opening);
+    const base = root.descendants().find(el => el.attrs['data-edge-id'] === 'base');
+    update(['base', 'right'], { cutId: 'left' });
+    const halves = effects.children[0].children;
+    assert.equal(halves.length, 2);
+    const spins = [], kicks = [];
+    for (const half of halves) {
+      const { frames, options } = half.animations[0];
+      const [start, first, next] = [0, 4, 8].map(i => pose(frames[i]));
+      assert.deepEqual(start, { x: 0, y: 0, spin: 0 });
+      assert.ok(next.y - first.y > first.y - start.y + 5, 'gravity accelerates the fall');
+      assert.ok(Math.abs(next.spin) > 0.25, 'each half tumbles visibly in the air');
+      assert.equal(frames[8].opacity, 1);
+      assert.equal(frames.at(-1).opacity, 0);
+      assert.ok(options.duration < 680);
+      assert.ok(half.children.find(el => el.attrs.class === 'hb-field__stripes').attrs.d, 'one blue stripe stays on each half');
+      spins.push(next.spin);
+      kicks.push(next.x);
+    }
+    assert.ok(spins[0] * spins[1] < 0 && kicks[0] * kicks[1] < 0);
+    assert.equal(halves.flatMap(half => half.children).filter(el => el.tag === 'circle').length, 1);
+    assert.equal(base.attrs.display, 'inline');
+    assert.equal(base.attrs['aria-disabled'], 'false');
+    assert.equal(base.getAnimations({ subtree: true }).length, 0);
+
+    update(['base'], { cutId: 'right' });
+    assert.equal(effects.children.length, 2);
+    assert.equal(scheduled.size, 2);
+    const [firstId, firstTimer] = scheduled.entries().next().value;
+    scheduled.delete(firstId);
+    firstTimer.run();
+    assert.equal(effects.children.length, 1);
+    const remaining = effects.getAnimations({ subtree: true });
+    update(opening, { reset: true });
+    assert.equal(scheduled.size, 0);
+    assert.equal(effects.children.length, 0);
+    assert.ok(remaining.every(animation => animation.cancelled));
+
+    update(['base', 'right'], { cutId: 'left' });
+    motion.matches = true;
+    motion.dispatchEvent(new Event('change'));
+    assert.equal(effects.children.length, 0);
+    assert.equal(scheduled.size, 0);
+    update(['base'], { cutId: 'right' });
+    assert.equal(effects.children.length, 0);
+  } finally {
+    renderer.destroy();
+  }
+});
+
+test('unsupported limbs turn toward their own center of mass, keep above the soil and rotate according to size', t => {
+  const { root } = surface(t);
+  const renderer = createBoard(root);
+  const board = {
+    height: 340, groundY: 314,
+    nodes: [{ id: 'ga', x: 220, y: 314, ground: true }, { id: 'a', x: 220, y: 200 }, { id: 'l', x: 186, y: 150 },
+      { id: 'gb', x: 630, y: 314, ground: true }, { id: 'b', x: 630, y: 200 }, { id: 'r', x: 732, y: 50 }],
+    edges: [{ id: 'baseA', a: 'ga', b: 'a', color: 'green' }, { id: 'small', a: 'a', b: 'l', color: 'green' },
+      { id: 'baseB', a: 'gb', b: 'b', color: 'green' }, { id: 'large', a: 'b', b: 'r', color: 'green' }],
+  };
+  const update = (live, options) => renderer.update({ board, live, side: 'green', ...options });
+  try {
+    update(board.edges.map(edge => edge.id));
+    update(['baseB', 'large'], { cutId: 'baseA', removed: ['small'] });
+    update([], { cutId: 'baseB', removed: ['large'] });
+    const falls = root.descendants().filter(el => el.attrs.class === 'hb-field__fall');
+    assert.equal(falls.length, 2);
+    const samples = falls.map(fall => pose(fall.animations[0].frames[8]));
+    assert.ok(samples[0].spin < 0 && samples[1].spin > 0);
+    assert.ok(Math.abs(samples[0].spin) > Math.abs(samples[1].spin));
+    for (const [i, fall] of falls.entries()) {
+      const ends = i === 0 ? board.nodes.slice(1, 3) : board.nodes.slice(4, 6);
+      const [cx, cy] = fall.style['transform-origin'].match(/-?[\d.]+/g).map(Number);
+      assert.ok(Math.abs(cx - (ends[0].x + ends[1].x) / 2) < 0.001);
+      const { frames } = fall.animations[0];
+      let lowest = -Infinity;
+      for (const frame of frames) {
+        const { y, spin } = pose(frame);
+        for (const end of ends) {
+          const at = cy + y + Math.sin(spin) * (end.x - cx) + Math.cos(spin) * (end.y - cy);
+          lowest = Math.max(lowest, at);
+        }
+      }
+      assert.ok(lowest > board.groundY - 2 && lowest <= board.groundY, 'the footprint reaches the soil without sinking through it');
+    }
+  } finally {
+    renderer.destroy();
+  }
 });
 
 test('a reopened game reconstructs a missing shared rim and reduced motion resolves the next cut immediately', t => {

@@ -1,5 +1,7 @@
 import { freshSeed, generateBoard } from './generator.js';
-import { CURRENT_BOARD_VERSION, normalizeMapSeed } from './map-seed.js';
+import { CURRENT_BOARD_VERSION, normalizeMapSeed, usesMapSeed } from './map-seed.js';
+import { CUSTOM_BOARD_VERSION } from './custom-board.js';
+import { normalizeComputerLevel } from './opponents.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
 
 const classicVariants = new Set(['green', 'redblue', 'mixed']);
@@ -25,6 +27,9 @@ export function normalizePlayers(players, firstSide = 'blue', opponent = 'local'
     const defaultKind = opponent === 'computer' && side !== firstSide ? 'computer' : 'human';
     const kind = supplied?.kind === 'computer' || supplied?.kind === 'human' ? supplied.kind : defaultKind;
     seats[side] = { name: cleanName(supplied?.name), kind: opponent === 'link' ? 'human' : kind };
+    if (seats[side].kind === 'computer' && supplied?.level !== undefined) {
+      seats[side].level = normalizeComputerLevel(supplied.level);
+    }
   }
   const bothComputers = seats.blue.kind === 'computer' && seats.red.kind === 'computer';
   for (const side of sides) {
@@ -37,14 +42,20 @@ export function normalizePlayers(players, firstSide = 'blue', opponent = 'local'
 }
 
 export function supportsBoard(version, variant, difficulty) {
+  if (version === CUSTOM_BOARD_VERSION) return difficulty === 'custom' && (variant === 'green' || variant === 'redblue');
   if (version === 3 || version === 4 || version === 5) return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
   return (version === 1 || version === 2) && classicVariants.has(variant) && classicSizes.has(difficulty);
 }
 
+export function boardDifficulty(version) {
+  if (version === CUSTOM_BOARD_VERSION) return 'custom';
+  return version >= 3 ? 'expert' : 'standard';
+}
+
 function openingPosition(config, boardVersion, newMatch) {
-  const { variant = 'green', difficulty = boardVersion >= 3 ? 'expert' : 'standard', opponent = 'local', seat,
+  const { variant = 'green', difficulty = boardDifficulty(boardVersion), opponent = 'local', seat,
     firstSide = 'blue', players, matchId, timed = boardVersion >= 3 } = config;
-  const seed = boardVersion >= 4 ? normalizeMapSeed(config.seed) : config.seed;
+  const seed = usesMapSeed(boardVersion) ? normalizeMapSeed(config.seed) : config.seed;
   if (typeof seed !== 'string' || seed.length > 256 || !supportsBoard(boardVersion, variant, difficulty) ||
       !opponents.has(opponent) || !sides.includes(firstSide) || (seat !== undefined && !sides.includes(seat)) ||
       typeof timed !== 'boolean' || (boardVersion >= 3 && !timed) ||
@@ -177,7 +188,7 @@ export function matchKey({
   seed, variant, difficulty, boardVersion = 1, timed = boardVersion >= 3, firstSide = 'blue', players, opponent = 'local', matchId,
 }) {
   const seats = normalizePlayers(players, firstSide, opponent);
-  const map = boardVersion >= 4 ? normalizeMapSeed(seed) : seed;
+  const map = usesMapSeed(boardVersion) ? normalizeMapSeed(seed) : seed;
   return JSON.stringify([variant, difficulty, map, boardVersion, timed, firstSide, seats.blue, seats.red, matchId ?? null]);
 }
 

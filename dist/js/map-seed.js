@@ -2,6 +2,10 @@ export const CURRENT_BOARD_VERSION = 5;
 export const MAP_COUNT = 0x1000000;
 const MASK = MAP_COUNT - 1;
 
+export function usesMapSeed(version) {
+  return version === 4 || version === CURRENT_BOARD_VERSION;
+}
+
 export function normalizeMapSeed(value) {
   if (typeof value !== 'string') return null;
   const seed = value.trim();

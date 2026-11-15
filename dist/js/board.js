@@ -86,22 +86,23 @@ function parameterAtLength(shape, distance) {
   return 1;
 }
 
-function slicePath(shape, from, to) {
+function sliceBranch(shape, from, to) {
   const a = pointAt(shape, from);
   const b = pointAt(shape, to);
-  if (!shape.control) return linePath(a, b);
+  if (!shape.control) return traceBranch(a, b);
   // Exact quadratic subcurve, using the derivative at its new start.
   const tangent = tangentAt(shape, from);
   const scale = (to - from) / 2;
-  return pathFor(a, b, { x: a.x + tangent.x * scale, y: a.y + tangent.y * scale });
+  return traceBranch(a, b, { x: a.x + tangent.x * scale, y: a.y + tangent.y * scale });
 }
 
-function crossbars(shape, color, halfWidth) {
+function crossbars(shape, color, halfWidth, from = 0, to = 1) {
   if (color === 'green' || !shape.length) return '';
   const spacing = Math.min(2.15, shape.length * 0.14);
   const offsets = color === 'blue' ? [-spacing, spacing] : [0];
   return offsets.map(offset => {
     const t = parameterAtLength(shape, shape.length / 2 + offset);
+    if (t < from || t > to) return '';
     const p = pointAt(shape, t);
     const tangent = tangentAt(shape, t);
     const length = Math.hypot(tangent.x, tangent.y) || 1;
@@ -109,6 +110,81 @@ function crossbars(shape, color, halfWidth) {
     const y = tangent.x / length * halfWidth;
     return linePath({ x: p.x - x, y: p.y - y }, { x: p.x + x, y: p.y + y });
   }).join('');
+}
+
+// Treat the ink as rods of uniform density. The same curve samples used for
+// picking give each piece its balance point, moment of inertia and soil contact.
+function fallingBody(shapes) {
+  let mass = 0, firstX = 0, firstY = 0, secondMoment = 0;
+  const points = [];
+  for (const { samples } of shapes) {
+    points.push(...samples);
+    for (let i = 1; i < samples.length; i++) {
+      const a = samples[i - 1], b = samples[i];
+      const length = b.along - a.along;
+      const x = (a.x + b.x) / 2, y = (a.y + b.y) / 2;
+      mass += length;
+      firstX += x * length;
+      firstY += y * length;
+      secondMoment += length * (x * x + y * y + length * length / 12);
+    }
+  }
+  const x = mass ? firstX / mass : points[0].x;
+  const y = mass ? firstY / mass : points[0].y;
+  const inertia = Math.max(25, secondMoment / (mass || 1) - x * x - y * y);
+  const offsets = points.map(point => ({ x: point.x - x, y: point.y - y }));
+  return { x, y, inertia, offsets };
+}
+
+// Sample a short rigid-body flight once. The browser interpolates these poses
+// while the next player can already select and cut another branch.
+function tumble(group, body, vx, vy, spin, floor, gravity) {
+  const step = 1 / 60;
+  const frames = [];
+  let x = 0, y = 0, angle = 0, fadeAt = 0.48;
+  for (let tick = 0; ; tick++) {
+    const time = tick * step;
+    if (tick) {
+      x += vx * step;
+      y += vy * step + gravity * step * step / 2;
+      vy += gravity * step;
+      angle += spin * step;
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      let footX = 0, footY = -Infinity;
+      for (const point of body.offsets) {
+        const down = sin * point.x + cos * point.y;
+        if (down > footY) {
+          footX = cos * point.x - sin * point.y;
+          footY = down;
+        }
+      }
+      const overlap = body.y + y + footY - floor;
+      if (overlap > 0) {
+        y -= overlap;
+        // A tip landing off-center exchanges vertical speed for rotation.
+        // Low restitution and soil friction make the first bounce settle.
+        const speed = Math.max(0, vy + spin * footX);
+        const normal = -1.18 * speed / (1 + footX * footX / body.inertia);
+        vy += normal;
+        spin += footX * normal / body.inertia;
+        const slip = (vx - spin * footY) / (1 + footY * footY / body.inertia);
+        const friction = -Math.sign(slip) * Math.min(Math.abs(slip), -normal * 0.55);
+        vx += friction;
+        spin -= footY * friction / body.inertia;
+        fadeAt = Math.min(fadeAt, Math.max(0.19, time));
+      }
+    }
+    const opacity = Math.max(0, Math.min(1, 1 - (time - fadeAt) / 0.16));
+    frames.push({
+      transform: `translate(${x.toFixed(3)}px, ${y.toFixed(3)}px) rotate(${angle.toFixed(5)}rad)`,
+      opacity,
+    });
+    if (!opacity) break;
+  }
+  group.style.setProperty('transform-origin', `${body.x}px ${body.y}px`);
+  const duration = (frames.length - 1) * step * 1000;
+  group.animate?.(frames, { duration, easing: 'linear', fill: 'backwards' });
+  return duration;
 }
 
 function incidence(edges) {
@@ -278,8 +354,13 @@ export function createBoard(container, { onCut } = {}) {
   function clearEffects() {
     for (const timer of timers) window.clearTimeout(timer);
     timers.clear();
+    for (const animation of effects.getAnimations?.({ subtree: true }) ?? []) animation.cancel();
     effects.replaceChildren();
   }
+  function motionChanged() {
+    if (reduceMotion.matches) clearEffects();
+  }
+  reduceMotion?.addEventListener?.('change', motionChanged);
 
   function build(next) {
     clearEffects();
@@ -403,51 +484,77 @@ export function createBoard(container, { onCut } = {}) {
     const fallen = vanished.filter(id => id !== cut?.id && (cut || reported.has(id))).map(id => edges.get(id));
     if (!cut && !fallen.length) return;
     const batch = svgElement('g');
+    effects.append(batch);
+    const floor = groundY - 1.5;
+    const gravity = Math.max(1700, height * 8.5);
+    let duration = 460; // The wash of an opened region peels for 460 ms.
+
+    function addLooseJoint(group, id) {
+      const node = nodes.get(id);
+      if (node.ground || incident.get(id).some(edge => live.has(edge.id))) return;
+      const dot = node.dot.cloneNode();
+      dot.setAttribute('class', 'hb-field__joint');
+      group.append(dot);
+    }
+
     if (cut) {
       batch.append(...art.opened(cut.id));
       const middle = cut.shape.length / 2;
+      const tangent = tangentAt(cut.shape, parameterAtLength(cut.shape, middle));
+      const length = Math.hypot(tangent.x, tangent.y) || 1;
+      const tx = tangent.x / length, ty = tangent.y / length;
       const gap = Math.min(2, middle * 0.16);
       const left = parameterAtLength(cut.shape, middle - gap);
       const right = parameterAtLength(cut.shape, middle + gap);
-      for (const [from, to, sign] of [[0, left, -1], [right, 1, 1]]) {
+      for (const [from, to, sign, end] of [[0, left, -1, cut.a], [right, 1, 1, cut.b]]) {
         const half = svgElement('g', { class: `hb-field__snip hb-field--${cut.color}` });
-        half.style.setProperty('--hb-drift', `${sign * 2.6}px`);
-        const ink = cut.stem.cloneNode();
-        ink.setAttribute('d', slicePath(cut.shape, from, to));
-        half.append(ink);
+        const shape = sliceBranch(cut.shape, from, to);
+        const keyline = cut.keyline.cloneNode(), ink = cut.stem.cloneNode(), stripes = cut.stripes.cloneNode();
+        keyline.setAttribute('d', shape.path);
+        ink.setAttribute('d', shape.path);
+        stripes.setAttribute('d', crossbars(cut.shape, cut.color, dense ? 1.5 : 1.8, from, to));
+        half.append(keyline, ink, stripes);
+        if (!fallen.some(edge => edge.a === end || edge.b === end)) addLooseJoint(half, end);
         batch.append(half);
+        const body = fallingBody([shape]);
+        const radius = Math.sqrt(body.inertia);
+        const kick = sign * 106 / (1 + radius / 100);
+        const vx = kick * (tx - 0.85 * ty);
+        const vy = kick * (0.55 * ty + 0.42 * tx) - 32;
+        const spin = sign * (1.8 + 80 / (radius + 8));
+        duration = Math.max(duration, tumble(half, body, vx, vy, spin, floor, gravity));
       }
     }
     for (const piece of components(fallen)) {
       const ghost = svgElement('g', { class: 'hb-field__fall' });
       ghost.append(...art.detached(new Set(piece.map(edge => edge.id))));
       const ends = new Set();
-      let center = 0;
       for (const edge of piece) {
         const copy = svgElement('g', { class: `hb-field--${edge.color}` });
         copy.append(edge.keyline.cloneNode(), edge.stem.cloneNode(), edge.stripes.cloneNode());
         ghost.append(copy);
         ends.add(edge.a).add(edge.b);
-        center += edge.center.x;
       }
-      const direction = center / piece.length < (cut?.center.x ?? width / 2) ? -1 : 1;
-      ghost.style.setProperty('--hb-drift', `${direction * 10}px`);
-      ghost.style.setProperty('--hb-spin', `${direction * 7}deg`);
-      for (const id of ends) {
-        const node = nodes.get(id);
-        if (!node.ground && !incident.get(id).some(edge => live.has(edge.id))) {
-          const copy = node.dot.cloneNode();
-          copy.setAttribute('class', 'hb-field__joint');
-          ghost.append(copy);
-        }
-      }
+      for (const id of ends) addLooseJoint(ghost, id);
       batch.append(ghost);
+      const body = fallingBody(piece.map(edge => edge.shape));
+      const radius = Math.sqrt(body.inertia);
+      // The shared joint is where this piece lost its support. A crown tips
+      // toward its heavier side, and a long limb turns more slowly.
+      const joint = cut && [cut.a, cut.b].find(id => ends.has(id));
+      const cutX = cut?.center.x ?? width / 2;
+      const pivotX = nodes.get(joint)?.at.x ?? cutX;
+      const lean = Math.max(-1, Math.min(1, (body.x - pivotX) / radius));
+      const shear = Math.sign(pivotX - cutX) || 1;
+      const direction = Math.abs(lean) > 0.08 ? Math.sign(lean) : shear;
+      const vx = direction * (23 + 47 * Math.abs(lean));
+      const spin = direction * Math.min(6.4, (78 + 76 * Math.abs(lean)) / (radius + 10));
+      duration = Math.max(duration, tumble(ghost, body, vx, -9, spin, floor, gravity));
     }
-    effects.append(batch);
     const timer = window.setTimeout(() => {
       batch.remove();
       timers.delete(timer);
-    }, 600);
+    }, Math.ceil(duration) + 34);
     timers.add(timer);
   }
 
@@ -674,6 +781,7 @@ export function createBoard(container, { onCut } = {}) {
     destroy() {
       observer?.disconnect();
       if (!observer) window.removeEventListener('resize', onResize);
+      reduceMotion?.removeEventListener?.('change', motionChanged);
       clearEffects();
       frame.remove();
     }
