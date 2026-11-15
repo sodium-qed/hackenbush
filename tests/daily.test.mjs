@@ -3,8 +3,9 @@ import assert from 'node:assert/strict';
 import { analyzePosition } from '../dist/js/analysis-values.js';
 import { createDailyGame, dailyOpening, dailySeed } from '../dist/js/daily.js';
 import { generateBoard } from '../dist/js/generator.js';
+import { chooseComputerMove } from '../dist/js/opponents.js';
 import { cutEdge, initialEdges, otherSide } from '../dist/js/rules.js';
-import { restoreGame, saveData, startTurnClock, TURN_MS } from '../dist/js/session.js';
+import { playCut, restoreGame, saveData, startTurnClock, TURN_MS } from '../dist/js/session.js';
 
 test('the daily seed follows the local calendar across midnight, leap day and New Year', () => {
   for (const [date, seed] of [
@@ -46,6 +47,7 @@ test('the complete generated board, starting turn and human seat are identical a
 
 test('Green seats follow the exact nimber for each date, including zero openings', () => {
   const orders = new Set(), seeds = new Set();
+  let greenDays = 0;
   for (let day = 1; day <= 31; day++) {
     const seed = dailySeed(new Date(2026, 0, day));
     const opening = dailyOpening(seed);
@@ -56,9 +58,26 @@ test('Green seats follow the exact nimber for each date, including zero openings
     assert.equal(opening.humanSide, value.nimber ? opening.firstSide : otherSide(opening.firstSide));
     orders.add(Boolean(value.nimber));
     seeds.add(JSON.stringify(board.edges.map(({ a, b }) => [a, b])));
+    greenDays++;
   }
   assert.deepEqual(orders, new Set([true, false]));
-  assert.ok(seeds.size > 20);
+  assert.equal(seeds.size, greenDays);
+});
+
+test('perfect Green play wins complete timed duels from either human turn order', () => {
+  for (const seed of ['DAILY-11-15-2026', 'DAILY-01-03-2026']) {
+    let game = createDailyGame(seed), now = 1_000;
+    while (!game.victor) {
+      game = startTurnClock(game, now);
+      const move = chooseComputerMove(game.board, game.live, game.side, 'expert');
+      assert.equal(move.proven, true);
+      game = playCut(game, move.edgeId, now + 100);
+      assert.ok(game);
+      now += 1_000;
+    }
+    assert.equal(game.victor, game.seat);
+    assert.equal(game.timedOut, null);
+  }
 });
 
 test('actual unilateral cuts certify positive and negative Red–Blue daily openings', () => {
