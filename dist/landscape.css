@@ -15,6 +15,53 @@
   height: 100%;
 }
 
+/* Printed-paper grain and a soft falloff toward the corners. */
+.hb-landscape::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(125% 95% at 50% 38%, transparent 52%, rgba(66, 80, 48, .17) 100%),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 .32 0 0 0 0 .3 0 0 0 0 .2 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.2'/%3E%3C/svg%3E");
+  mix-blend-mode: multiply;
+}
+
+.hb-landscape__sway { transform-box: fill-box; transform-origin: 50% 100%; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .hb-landscape__cloud { animation: hb-landscape-drift calc(52s + var(--slot) * 9s) ease-in-out infinite alternate; }
+  .hb-landscape__flock { animation: hb-landscape-glide 34s ease-in-out infinite alternate; }
+  .hb-landscape__glow { animation: hb-landscape-glow 7s ease-in-out infinite alternate; }
+  .hb-landscape__sway { animation: hb-landscape-sway calc(3.6s + var(--slot) * .23s) ease-in-out calc(var(--slot) * -.7s) infinite alternate; }
+  .hb-landscape__rain { animation: hb-landscape-rain 1.3s linear infinite; }
+}
+
+@keyframes hb-landscape-drift {
+  from { transform: translateX(calc(-9px - var(--slot) * 3px)); }
+  to { transform: translateX(calc(15px + var(--slot) * 5px)); }
+}
+
+@keyframes hb-landscape-glide {
+  from { transform: translate(calc(var(--slot) * -16px), 2px); }
+  50% { transform: translate(0, -3px); }
+  to { transform: translate(calc(var(--slot) * 22px), 1px); }
+}
+
+@keyframes hb-landscape-glow {
+  from { opacity: .72; }
+  to { opacity: 1; }
+}
+
+@keyframes hb-landscape-sway {
+  from { transform: rotate(-2.2deg); }
+  to { transform: rotate(2.6deg); }
+}
+
+@keyframes hb-landscape-rain {
+  from { opacity: .95; transform: translateY(-1.5px); }
+  to { opacity: .45; transform: translateY(3px); }
+}
+
 .hb-field > .hb-landscape ~ svg {
   z-index: 1;
 }

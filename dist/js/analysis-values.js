@@ -1,4 +1,4 @@
-import { chooseMove, inspectGraph, prepareGraph } from './strategy.js?v=7';
+import { chooseMove, inspectGraph, prepareGraph } from './strategy.js?v=8';
 import { otherSide } from './rules.js';
 
 function count(mask) {

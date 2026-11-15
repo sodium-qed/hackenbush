@@ -235,6 +235,16 @@ export function createRegionArt(prefix, svgElement) {
     }
   }
 
+  // Each filled cell blooms once the last branch of its outline has drawn.
+  function grow(ends) {
+    return regions.filter(region => region.visible).map(region => {
+      const closed = Math.max(...region.ids.map(id => ends.get(id) ?? 0));
+      return region.group.animate?.([
+        { opacity: 0, transform: 'scale(.7)' }, { opacity: 1, transform: 'scale(1)' }
+      ], { duration: 380, delay: Math.max(0, closed - 140), easing: 'cubic-bezier(.2,.9,.3,1.25)', fill: 'backwards' });
+    });
+  }
+
   function copy(region, className) {
     // The originals and the transient pieces share the same immutable SVG
     // resources. Only the copy moves; neighboring cells stay on their joints.
@@ -260,5 +270,5 @@ export function createRegionArt(prefix, svgElement) {
       .map(region => copy(region, 'hb-field__detached-region'));
   }
 
-  return { defs, shapes, layer, build, project, setLive, preview, opened, detached };
+  return { defs, shapes, layer, build, project, setLive, preview, grow, opened, detached };
 }

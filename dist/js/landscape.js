@@ -70,6 +70,8 @@ const line = (d, color, w = 1) => `<path d="${d}" fill="none" stroke="${color}" 
 const ellipse = (x, y, rx, ry, color) => `<ellipse cx="${round(x)}" cy="${round(y)}" rx="${round(rx)}" ry="${round(ry)}" fill="${color}"/>`;
 const group = (transform, contents) => `<g transform="${transform}">${contents}</g>`;
 const stamp = (x, y, sx, sy, contents) => group(`translate(${point(x, y)}) scale(${point(sx, sy)})`, contents);
+// Ambient motion is styled in landscape.css and never changes the geometry.
+const moving = (name, slot, contents) => `<g class="hb-landscape__${name}" style="--slot:${slot}">${contents}</g>`;
 const below = (ridge, color) => silhouette(ridge + ' L912 346 H-12Z', color);
 const angular = points => 'M' + points.map(([x, y]) => point(x, y)).join(' L');
 
@@ -110,8 +112,8 @@ function skyMarks(r, p, mood, h, sunX, wind, biome) {
     const top = r() < 0.5
       ? 'M-59 4 Q-49 1 -39 1 Q-36 -4 -29 -3 Q-27 -9 -18 -8 Q-11 -15 2 -13 Q13 -13 16 -7 Q24 -10 32 -5 Q40 -6 43 -1 Q53 -1 61 3 Q26 4 6 3 Q-25 6 -59 4Z'
       : 'M-68 3 Q-42 -1 -22 0 Q-16 -6 -7 -5 Q0 -9 12 -8 Q22 -7 27 -4 Q44 -5 55 -1 L69 1 Q57 3 35 2 Q14 5 -6 3 Q-25 5 -68 3Z';
-    marks += stamp(x, y, w * wind, tall, silhouette(top, cloudInk) +
-      line('M-36 7 Q-20 6 -10 7 M7 7 Q24 5 37 6', mix(cloudInk, p.sky, 0.4), 0.85));
+    marks += moving('cloud', i * wind, stamp(x, y, w * wind, tall, silhouette(top, cloudInk) +
+      line('M-36 7 Q-20 6 -10 7 M7 7 Q24 5 37 6', mix(cloudInk, p.sky, 0.4), 0.85)));
   }
   if (mood === 'wind') {
     marks += stamp(sunX, h - r(43, 70), wind, 1,
@@ -124,22 +126,24 @@ function skyMarks(r, p, mood, h, sunX, wind, biome) {
       const y = r(0, 6);
       rain += `M${point(offset, y)}l${point(-wind * r(9, 13), r(14, 21))}`;
     }
-    marks += stamp(rainCloud.x, rainCloud.y + 4, 1, 1, line(rain, mix(p.sky, p.far, 0.55), 0.85));
+    marks += moving('rain', 0, stamp(rainCloud.x, rainCloud.y + 4, 1, 1, line(rain, mix(p.sky, p.far, 0.55), 0.85)));
   }
   if (biome === 'coast' || biome === 'wetland' || r() < 0.38) {
     const x = r() < 0.5 ? r(64, 235) : r(656, 826);
     const y = r(47, h - 56);
     const flock = biome === 'coast' ? Math.floor(r(3, 7)) : Math.floor(r(2, 5));
+    let birds = '';
     for (let i = 0; i < flock; i++) {
       const size = r(0.48, 0.95);
-      marks += stamp(x + i * r(10, 14), y + i * r(-3.5, 3), size * wind, size,
+      birds += stamp(x + i * r(10, 14), y + i * r(-3.5, 3), size * wind, size,
         silhouette('M-7 -2 Q-3 -3.4 0 -0.5 Q2.7 -3.6 7 -3 Q3 -2.3 0 1 Q-2.6 -1 -7 -2Z', mix(p.ink, p.sky, 0.37)));
     }
+    marks += moving('flock', wind, birds);
   }
   return marks;
 }
 
-function celestial(r, p, mood, x) {
+function celestial(r, p, mood, x, id) {
   const y = mood === 'morning' ? r(10, 21) : r(2, 14);
   const size = r(11, 15);
   let disk = '';
@@ -148,7 +152,7 @@ function celestial(r, p, mood, x) {
     disk += silhouette('M28 -15 l0.9 3.8 3.3 0.9 -3.3 0.8 -0.9 3.5 -0.8 -3.5 -3.4 -0.8 3.4 -0.9Z', p.cloud);
   } else {
     const sun = mood === 'mist' || mood === 'after-rain' ? mix(p.sun, p.cloud, 0.48) : p.sun;
-    disk = ellipse(0, 0, 23, 23, sun);
+    disk = `<circle class="hb-landscape__glow" r="74" fill="url(#${id}-glow)"/>` + ellipse(0, 0, 23, 23, sun);
     for (const level of [9, 13.8, 18.2]) {
       const chord = Math.sqrt(23 ** 2 - level ** 2);
       disk += line('M' + point(-chord, level) + ' Q' + point(-chord * 0.2, level - 0.35) + ' ' +
@@ -156,7 +160,10 @@ function celestial(r, p, mood, x) {
     }
   }
   // Its own viewport keeps the sun circular on a narrow, unzoomed board.
-  return `<svg x="${round(x / 9 - size / 2)}%" y="${round(y)}%" width="${round(size)}%" height="24%" viewBox="-34 -34 68 68" preserveAspectRatio="xMidYMid meet">${disk}</svg>`;
+  const halo = mood === 'evening' ? p.cloud : mix(p.sun, '#fff3c4', 0.55);
+  const glow = `<defs><radialGradient id="${id}-glow"><stop offset=".28" stop-color="${halo}" stop-opacity=".5"/><stop offset=".55" stop-color="${halo}" stop-opacity=".17"/><stop offset="1" stop-color="${halo}" stop-opacity="0"/></radialGradient></defs>`;
+  if (mood === 'evening') disk = `<circle class="hb-landscape__glow" r="74" fill="url(#${id}-glow)" opacity=".7"/>` + disk;
+  return `<svg x="${round(x / 9 - size / 2)}%" y="${round(y)}%" width="${round(size)}%" height="24%" viewBox="-34 -34 68 68" preserveAspectRatio="xMidYMid meet" overflow="visible">${glow}${disk}</svg>`;
 }
 
 function deciduous(x, y, scale, main, detail, fruit) {
@@ -193,7 +200,7 @@ function grass(r, x, y, w, h, ink, wind) {
     const tall = r(h * 0.24, h);
     leaves += `M${point(foot - 1.2, 0)}Q${point(foot - 1, -tall * 0.52)} ${point(tip, -tall)}Q${point(foot + 2.2, -tall * 0.37)} ${point(foot + 2, 0)}Z`;
   }
-  return stamp(x, y, 1, 1, silhouette(leaves, ink));
+  return moving('sway', Math.round(x) % 7, stamp(x, y, 1, 1, silhouette(leaves, ink)));
 }
 
 function reeds(r, x, y, scale, p, wind) {
@@ -252,7 +259,7 @@ function poppy(r, x, y, scale, p, wind) {
   const stalk = line(`M0 0 Q${point(-bend, -h * 0.55)} ${point(bend, -h)}`, p.ink, 1.3);
   const leaf = silhouette('M0 -4 Q-7 -5 -8 -11 Q-2 -9 0 -4Z M0 -8 Q2 -15 7 -15 Q5 -10 0 -8Z', p.ink);
   const cup = silhouette('M-5.8 -3 Q-4.8 -5 -3 -3.6 Q-2 -6 0 -4 Q2 -5.8 3 -3.9 Q5 -6 6 -4 Q5 0.4 0 1.2 Q-4.7 1 -5.8 -3Z', p.accent);
-  return stamp(x, y, scale, scale, stalk + leaf + stamp(bend, -h, 1, 1, cup));
+  return moving('sway', Math.round(x + 3) % 7, stamp(x, y, scale, scale, stalk + leaf + stamp(bend, -h, 1, 1, cup)));
 }
 
 function meadow(r, p, h, wind) {
@@ -653,7 +660,7 @@ export function renderLandscape(container, world, seed) {
   const sunX = mirrored ? r(682, 821) : r(76, 219);
   const id = previous?.id ?? 'hb-landscape-sky-' + ++nextPlate;
   const sky = `<defs><linearGradient id="${id}" x1="0" x2="0" y1="0" y2="1"><stop stop-color="${p.sky}"/><stop offset=".78" stop-color="${p.air}"/></linearGradient></defs><rect width="100%" height="100%" fill="url(#${id})"/>`;
-  const light = celestial(r, p, mood, sunX);
+  const light = celestial(r, p, mood, sunX, id);
   const clouds = skyMarks(r, p, mood, h, sunX, wind, biome);
   let land = terrains[biome](r, p, h, mirrored ? -wind : wind);
   if (mirrored) land = group('translate(900 0) scale(-1 1)', land);
