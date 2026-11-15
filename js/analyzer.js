@@ -1,7 +1,9 @@
 import { createBoard } from './board.js';
+import { dailyOpening } from './daily.js';
 import { renderLandscape } from './landscape.js';
+import { isDailySeed, TEXT_BOARD_VERSION } from './map-seed.js';
 import { cutEdge, initialEdges, otherSide } from './rules.js';
-import { analyzePosition, dyadicChange } from './analysis-values.js?v=6';
+import { analyzePosition, dyadicChange } from './analysis-values.js?v=7';
 
 const variants = { green: 'Green', redblue: 'Red–Blue', mixed: 'Mixed' };
 const sideNames = { blue: 'Blue', red: 'Red' };
@@ -198,7 +200,7 @@ export function createAnalyzer(dialog) {
       view.winner.textContent = current.winner ? player(game, current.winner) : 'Unresolved';
       view.winner.dataset.side = game.variant === 'green' ? '' : current.winner || '';
       view.status.textContent = moveLabel() + '. ' + readoutLabel(current) + ' ' + scoreOf(current, true) + '. ' +
-        (current.winner ? player(game, current.winner) + ' wins with perfect play.' : 'Untimed winner unresolved.');
+        (current.winner ? player(game, current.winner) + ' can force a win.' : 'Untimed winner unresolved.');
     } else {
       view['value-label'].textContent = 'Position value';
       view.value.textContent = 'Calculating…';
@@ -234,6 +236,10 @@ export function createAnalyzer(dialog) {
     function active() { return token === generation && game && dialog.open; }
     function received(i, result) {
       if (!active()) return;
+      if (i === 0 && !result.winner && game.boardVersion === TEXT_BOARD_VERSION && isDailySeed(game.seed)) {
+        const opening = dailyOpening(game.seed);
+        if (opening.variant === game.variant && opening.firstSide === game.firstSide) result = { ...result, winner: opening.humanSide };
+      }
       cache.set(i, result);
       showAnalysis();
     }
@@ -254,7 +260,7 @@ export function createAnalyzer(dialog) {
 
     if (typeof Worker !== 'function') { fallback(); return; }
     try {
-      worker = new Worker(new URL('./analysis-worker.js?v=6', import.meta.url), { type: 'module' });
+      worker = new Worker(new URL('./analysis-worker.js?v=7', import.meta.url), { type: 'module' });
       worker.onmessage = ({ data }) => {
         if (!active()) return;
         received(data.index, data.result);

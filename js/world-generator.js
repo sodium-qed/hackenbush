@@ -1,4 +1,4 @@
-import { normalizeMapSeed, permuteMapNumber } from './map-seed.js';
+import { isDailySeed, MAP_COUNT, normalizeMapSeed, normalizeTextSeed, permuteMapNumber, TEXT_BOARD_VERSION } from './map-seed.js';
 import { growLandmark } from './world-growth.js';
 import { connectCrowns } from './world-weave.js';
 
@@ -315,7 +315,23 @@ export function generateWorld(seed) {
   const mapSeed = normalizeMapSeed(seed);
   if (!mapSeed) throw new RangeError('A map seed must have six hexadecimal digits.');
   const word = permuteMapNumber(Number.parseInt(mapSeed, 16) ^ 0xb7283d);
-  const random = randomSource(word);
+  return growWorld(mapSeed, word, randomSource(word));
+}
+
+export function generateTextWorld(seed, seedRandom) {
+  const mapSeed = isDailySeed(seed) ? seed : normalizeTextSeed(seed);
+  if (!mapSeed) throw new RangeError('Invalid garden seed.');
+  // Hash the entire name separately for the setting and the branching network.
+  // Two names that share a 24-bit ground layout can grow different gardens.
+  const setting = seedRandom(JSON.stringify([TEXT_BOARD_VERSION, 'setting', mapSeed]));
+  const growth = seedRandom(JSON.stringify([TEXT_BOARD_VERSION, 'growth', mapSeed]));
+  const groundWord = Math.floor(setting() * MAP_COUNT);
+  const board = growWorld(mapSeed, groundWord, growth);
+  board.world.mapSeed = Math.floor(setting() * MAP_COUNT).toString(16).toUpperCase().padStart(6, '0');
+  return board;
+}
+
+function growWorld(mapSeed, word, random) {
   const biome = BIOMES[(word >>> 13) & 7];
   const wind = random() < 0.5 ? -1 : 1;
   const ground = groundPositions(word);

@@ -1,7 +1,7 @@
 import { botanicalGarden } from './garden-layouts.js';
 import { composeMap } from './map-catalog.js';
-import { CURRENT_BOARD_VERSION } from './map-seed.js';
-import { generateWorld } from './world-generator.js';
+import { CURRENT_BOARD_VERSION, TEXT_BOARD_VERSION } from './map-seed.js';
+import { generateTextWorld, generateWorld } from './world-generator.js';
 import { CUSTOM_BOARD_VERSION, readCustomBoard } from './custom-board.js';
 
 const GROUND_Y = 244;
@@ -553,11 +553,13 @@ export function generateBoard(seed, variant = 'green', difficulty = 'expert', bo
     if (!custom || custom.variant !== variant) throw new RangeError('Invalid custom board for this ruleset.');
     return custom.board;
   }
-  if (boardVersion === 5 || boardVersion === '5') {
-    const code = seed === undefined ? 'A35D7E' : seed;
-    const { roots, loads, ...board } = generateWorld(code);
+  const textWorld = boardVersion === TEXT_BOARD_VERSION || boardVersion === String(TEXT_BOARD_VERSION);
+  if (textWorld || boardVersion === 5 || boardVersion === '5') {
+    const version = textWorld ? TEXT_BOARD_VERSION : 5;
+    const network = textWorld ? generateTextWorld(seed, randomSource) : generateWorld(seed === undefined ? 'A35D7E' : seed);
     const colors = variant === 'redblue' ? 'redblue' : 'green';
-    colorNetwork({ edges: board.edges, roots, loads }, randomSource(JSON.stringify([5, board.mapSeed, colors])), colors);
+    colorNetwork(network, randomSource(JSON.stringify([version, network.mapSeed, colors])), colors);
+    const { roots, loads, ...board } = network;
     return board;
   }
   if (boardVersion === 4 || boardVersion === '4') {

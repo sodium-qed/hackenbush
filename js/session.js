@@ -1,5 +1,5 @@
 import { freshSeed, generateBoard } from './generator.js';
-import { CURRENT_BOARD_VERSION, normalizeMapSeed, usesMapSeed } from './map-seed.js';
+import { CURRENT_BOARD_VERSION, TEXT_BOARD_VERSION, isDailySeed, normalizeMapSeed, normalizeTextSeed, usesMapSeed } from './map-seed.js';
 import { CUSTOM_BOARD_VERSION } from './custom-board.js';
 import { normalizeComputerLevel } from './opponents.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
@@ -43,7 +43,9 @@ export function normalizePlayers(players, firstSide = 'blue', opponent = 'local'
 
 export function supportsBoard(version, variant, difficulty) {
   if (version === CUSTOM_BOARD_VERSION) return difficulty === 'custom' && (variant === 'green' || variant === 'redblue');
-  if (version === 3 || version === 4 || version === 5) return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
+  if (version === 3 || version === 4 || version === 5 || version === TEXT_BOARD_VERSION) {
+    return difficulty === 'expert' && (variant === 'green' || variant === 'redblue');
+  }
   return (version === 1 || version === 2) && classicVariants.has(variant) && classicSizes.has(difficulty);
 }
 
@@ -52,10 +54,19 @@ export function boardDifficulty(version) {
   return version >= 3 ? 'expert' : 'standard';
 }
 
+export function normalizeMatchSeed(seed, boardVersion, opponent) {
+  if (usesMapSeed(boardVersion)) return normalizeMapSeed(seed);
+  if (boardVersion === TEXT_BOARD_VERSION) {
+    if (opponent === 'computer' && isDailySeed(seed)) return seed;
+    return normalizeTextSeed(seed);
+  }
+  return seed;
+}
+
 function openingPosition(config, boardVersion, newMatch) {
   const { variant = 'green', difficulty = boardDifficulty(boardVersion), opponent = 'local', seat,
     firstSide = 'blue', players, matchId, timed = boardVersion >= 3 } = config;
-  const seed = usesMapSeed(boardVersion) ? normalizeMapSeed(config.seed) : config.seed;
+  const seed = normalizeMatchSeed(config.seed, boardVersion, opponent);
   if (typeof seed !== 'string' || seed.length > 256 || !supportsBoard(boardVersion, variant, difficulty) ||
       !opponents.has(opponent) || !sides.includes(firstSide) || (seat !== undefined && !sides.includes(seat)) ||
       typeof timed !== 'boolean' || (boardVersion >= 3 && !timed) ||
@@ -69,6 +80,10 @@ function openingPosition(config, boardVersion, newMatch) {
   }
   const seats = normalizePlayers(assignments, firstSide, opponent);
   const humanSide = sides.find(side => seats[side].kind === 'human' && seats[otherSide(side)].kind === 'computer');
+  if (boardVersion === TEXT_BOARD_VERSION && isDailySeed(seed) &&
+      (!humanSide || (seat !== undefined && seat !== humanSide))) {
+    throw new Error('A daily duel requires one human and one computer, with the human on this device.');
+  }
   const board = generateBoard(seed, variant, difficulty, boardVersion);
   const live = initialEdges(board);
   const game = {
@@ -93,6 +108,11 @@ function ownsClock(game) {
   return game.opponent !== 'link' || game.side === game.seat;
 }
 
+function isDailyComputerTurn(game) {
+  return game.boardVersion === TEXT_BOARD_VERSION && game.opponent === 'computer' &&
+    game.side !== game.seat && isDailySeed(game.seed);
+}
+
 function validTimestamp(value) {
   return Number.isSafeInteger(value) && value >= 0;
 }
@@ -106,6 +126,8 @@ export function startTurnClock(game, now = Date.now()) {
 
 export function expireTurn(game, now = Date.now()) {
   if (!game.timed || game.victor || game.deadline === null || !validTimestamp(now) || now < game.deadline) return game;
+  // A suspended browser cannot run the daily opponent. Resume its pending move when the board returns.
+  if (isDailyComputerTurn(game)) return startTurnClock({ ...game, deadline: null }, now);
   return { ...game, victor: otherSide(game.side), timedOut: game.side, deadline: null };
 }
 
@@ -153,7 +175,7 @@ export function restoreGame(saved, now = Date.now()) {
     if (deadline === null && timedOut === null) return game;
     if (!game.timed || game.victor) return null;
     if (timedOut !== null) {
-      if (timedOut !== game.side || deadline !== null) return null;
+      if (timedOut !== game.side || deadline !== null || isDailyComputerTurn(game)) return null;
       return { ...game, victor: otherSide(timedOut), timedOut };
     }
     if (!ownsClock(game) || !validTimestamp(deadline) || deadline < TURN_MS || !validTimestamp(now)) return null;
@@ -188,7 +210,7 @@ export function matchKey({
   seed, variant, difficulty, boardVersion = 1, timed = boardVersion >= 3, firstSide = 'blue', players, opponent = 'local', matchId,
 }) {
   const seats = normalizePlayers(players, firstSide, opponent);
-  const map = usesMapSeed(boardVersion) ? normalizeMapSeed(seed) : seed;
+  const map = normalizeMatchSeed(seed, boardVersion, opponent);
   return JSON.stringify([variant, difficulty, map, boardVersion, timed, firstSide, seats.blue, seats.red, matchId ?? null]);
 }
 

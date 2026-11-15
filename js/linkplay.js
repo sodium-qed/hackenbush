@@ -1,8 +1,8 @@
 import { generateBoard } from './generator.js';
-import { CURRENT_BOARD_VERSION, normalizeMapSeed, usesMapSeed } from './map-seed.js';
+import { CURRENT_BOARD_VERSION, TEXT_BOARD_VERSION, usesMapSeed } from './map-seed.js';
 import { CUSTOM_BOARD_VERSION } from './custom-board.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
-import { boardDifficulty, normalizePlayers, supportsBoard } from './session.js';
+import { boardDifficulty, normalizeMatchSeed, normalizePlayers, supportsBoard } from './session.js';
 
 const PREFIX = '#turn=';
 const SIDES = ['blue', 'red'];
@@ -116,8 +116,9 @@ export function encodeTurn({
   if (!Array.isArray(moves) || moves.length > MAX_MOVES) {
     throw new RangeError('The move list must contain at most 256 cuts.');
   }
-  const seed = usesMapSeed(boardVersion) ? normalizeMapSeed(inputSeed) : inputSeed;
+  const seed = normalizeMatchSeed(inputSeed, boardVersion, 'link');
   if (usesMapSeed(boardVersion) && seed === null) throw new RangeError('A map code must contain six hexadecimal digits.');
+  if (boardVersion === TEXT_BOARD_VERSION && seed === null) throw new RangeError('Invalid or reserved text seed for a turn link.');
   const seedToken = encodeText(seed, MAX_SEED_BYTES);
   const seats = linkPlayers(players, firstSide);
   const blue = encodeText(seats.blue.name, MAX_NAME_BYTES);
@@ -155,7 +156,7 @@ function decodeMetadata(fields) {
   const timed = version === '3';
   if ((!timed && version !== '2') || fields.length !== (timed ? 11 : 10) || !SIDES.includes(firstSide)) return null;
   const [versionToken, blueToken, redToken, idToken, timeoutToken] = fields.slice(6);
-  const boardVersions = timed ? ['1', '2', '3', '4', '5', String(CUSTOM_BOARD_VERSION)] : ['1', '2'];
+  const boardVersions = timed ? ['1', '2', '3', '4', '5', String(CUSTOM_BOARD_VERSION), String(TEXT_BOARD_VERSION)] : ['1', '2'];
   if (!boardVersions.includes(versionToken)) return null;
   if (idToken !== '' && !MATCH_ID.test(idToken)) return null;
   const timedOut = timeoutToken || null;
@@ -193,7 +194,7 @@ export function decodeTurn(hash) {
     if (!metadata || !supportsBoard(metadata.boardVersion, variant, difficulty)) return null;
     const storedSeed = decodeText(seedToken, MAX_SEED_BYTES);
     if (usesMapSeed(metadata.boardVersion) && storedSeed?.length !== 6) return null;
-    const seed = usesMapSeed(metadata.boardVersion) ? normalizeMapSeed(storedSeed) : storedSeed;
+    const seed = normalizeMatchSeed(storedSeed, metadata.boardVersion, 'link');
     if (seed === null) return null;
     const board = generateBoard(seed, variant, difficulty, metadata.boardVersion);
     if (indices.length > board.edges.length) return null;
