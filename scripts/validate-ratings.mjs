@@ -1,8 +1,8 @@
 import { pathToFileURL } from 'node:url';
 import { calibrationSeed, playCalibrationGame } from './calibration.mjs';
-import { forecastOpening, newPool, ratedBotSummary, skillForecast, winChance } from '../dist/js/rating-model.js';
+import { forecastOpening, INITIAL_RATING, newPool, ratedBotSummary, skillForecast, winChance } from '../dist/js/rating-model.js';
 import { prepareRatedOpening } from '../dist/js/rating-opening.js';
-import { ratedDeal } from '../dist/js/rated-deal.js';
+import { legacyRatedDeal as ratedDeal } from '../dist/js/rated-deal.js';
 import { otherSide } from '../dist/js/rules.js';
 import { createGame } from '../dist/js/session.js';
 
@@ -16,12 +16,12 @@ function randomStream() {
 export function syntheticRecovery(trials = 512, games = 80) {
   const random = randomStream();
   const groups = {};
-  for (const truth of [800, 1000, 1200]) {
+  for (const truth of [INITIAL_RATING - 200, INITIAL_RATING, INITIAL_RATING + 200]) {
     let signed = 0, squared = 0, totalRd = 0, covered = 0;
     for (let trial = 0; trial < trials; trial++) {
       let pool = newPool();
       for (let i = 0; i < games; i++) {
-        const offset = -1000 + 600 * (random() - 0.5);
+        const offset = -INITIAL_RATING + 600 * (random() - 0.5);
         const nuisance = 10 + random() * 100;
         const z = Math.sqrt(-2 * Math.log(1 - random())) * Math.cos(2 * Math.PI * random());
         const win = random() < winChance(truth + offset + nuisance * z);
@@ -64,10 +64,10 @@ export function referencePolicyStudy(boardCount = 384) {
           forced++; continue;
         }
         skill++;
-        const reference = { rating: 1000, rd: 0 };
+        const reference = { rating: INITIAL_RATING, rd: 0 };
         const forecast = forecastOpening(reference, g, opening);
         const ablated = forecastOpening(reference, g, { ...opening, lower: 0, upper: 0, score: 0 });
-        const baseline = winChance(1000 - ratedBotSummary(variant, level).rating);
+        const baseline = winChance(INITIAL_RATING - ratedBotSummary(variant, level).rating);
         fullError += (forecast.expected - y) ** 2;
         noTransferError += (ablated.expected - y) ** 2;
         overallOnlyError += (baseline - y) ** 2;

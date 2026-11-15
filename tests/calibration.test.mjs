@@ -2,13 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { BOT_CALIBRATION, CALIBRATION_VERSION } from '../dist/js/bot-calibration.js';
 import { generateBoard } from '../dist/js/generator.js';
-import { ratedBotMove, ratedDeal, ratedOpeningWinner } from '../dist/js/rated-deal.js';
+import { legacyRatedDeal as ratedDeal, ratedBotMove, ratedOpeningWinner } from '../dist/js/rated-deal.js';
 import { initialEdges, legalMoves, otherSide } from '../dist/js/rules.js';
 import { calibrationSeed, generateCorpus, playCalibrationGame } from '../scripts/calibration.mjs';
 import { features, fitVariant, predict } from '../scripts/calibration-fit.mjs';
 import { createOracle, makeBoard } from './helpers/hackenbush-oracle.mjs';
 
-test('rated deals reproduce all twelve size, opener and seat assignments on six-hex seeds', () => {
+test('legacy rated deals reproduce all twelve size, opener and seat assignments on six-hex seeds', () => {
   assert.deepEqual(ratedDeal(' abcdef '), {
     seed: 'ABCDEF', boardVersion: 1, difficulty: 'large', firstSide: 'blue', seat: 'blue',
   });

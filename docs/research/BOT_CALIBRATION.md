@@ -1,6 +1,34 @@
-# Calibration of the three Groundwork opponents
+# Groundwork bot strengths
 
-The published ladder estimates how often the actual opponents beat one another on the gardens issued by Rated play. Standard is the local reference at 1000 in each variant. Two fits answer different questions. The **overall ladder** compares policies before seeing the deal. The **conditional fit** predicts results once the opening, turn, opponent and eligibility are known. The client displays the first and uses the second in its player-skill likelihood.
+## Full gardens and named opponents
+
+The current roster uses the names and published ratings of eight Chess.com personalities. The local game supplies every Hackenbush move. Its two player pools start at 1200. A chess label supplies the starting strength assumption for the local forecast. Human playing strength at the corresponding rating in either game has yet to be measured. [Chess.com bot roster and ratings](https://www.chess.com/forum/view/community/bot-personalities-engine-levels)
+
+The paired full-garden study takes consecutive, reproducible seeds from `calibrationSeed(0x20000 + i)`. Each pair plays twice per opening with colors swapped and the same first color, board, and bot policies. The strong side can therefore be judged from both seats even when the draw strongly favors one seat. Run `node scripts/full-garden-study.mjs` to compare adjacent profiles and the two widest selected matchups separately for Green and Red–Blue. The script also reports opening size, turns per match, and how often each pair splits its two games.
+
+The 64 evaluation seeds produced 85–151 branches, with a median of 111 compared with 14 on the legacy boards for those same codes. The following are wins for the first-named bot in 128 games per pairing and ruleset. Each entry includes both seats on every opening. The 2,304 games had a median of 41 turns in Green and 62.5 in Red–Blue.
+
+| Pair | Green wins | Red–Blue wins |
+| --- | ---: | ---: |
+| Aron against Martin | 96/128 | 71/128 |
+| Emir against Aron | 70/128 | 76/128 |
+| Nelson against Emir | 80/128 | 112/128 |
+| Isabel against Nelson | 82/128 | 80/128 |
+| Wally against Isabel | 102/128 | 84/128 |
+| Li against Wally | 103/128 | 80/128 |
+| Noam against Li | 96/128 | 71/128 |
+| Noam against Martin | 128/128 | 125/128 |
+| Noam against Nelson | 128/128 | 110/128 |
+
+The weaker opponents sample fewer candidate cuts. On Green, stronger profiles more often look for a zero-nimber reply, and Noam always finds one when available. On Red–Blue, stronger profiles examine replies, account for vulnerable supports and solve larger endgames. Noam also asks the bounded analyzer for a proof on promising candidates. A still-open large Red–Blue position can require a heuristic move.
+
+To check whether a game can award points, eight additional seeds were drawn using the assigned human seats on `000000`, `A35D7E`, `A35D7F`, `90129F`, `01CAFE`, `22D301`, `FFFFFF` and `424242`. With all eight bots, Green had 60 assignments with legal lines to both outcomes and four proved losses against Noam. Red–Blue had 58 assignments with both lines and six for which the probe budget was inconclusive. These figures describe the selected seeds. The published chess labels and the 80-point opening adjustment remain provisional for human Hackenbush players.
+
+## Historical study on version 1 gardens
+
+The remainder of this document records the original three-policy experiment in its original 1000-point coordinates. Those gardens and policies are still used to replay or finish saved version 1 matches. Their coefficients apply to the legacy population. The numerical tables below are historical.
+
+The original ladder estimated how often the three opponents beat one another on the small gardens issued at the time. Standard was the local reference at 1000 in each variant. The **overall ladder** compared policies before seeing the deal. The **conditional fit** predicted results once the opening, turn, opponent and eligibility were known.
 
 ## Opponents and deal population
 
@@ -10,7 +38,7 @@ The published ladder estimates how often the actual opponents beat one another o
 | Standard | Take an immediate win if available. Otherwise rank cuts by surviving material difference, the parity of shared moves and the number of replies. Prefer a cut that avoids an immediate winning reply. Equal scores retain stable move order. |
 | Expert | Use the existing graph solver and its move ordering. An exact losing position can have many equally losing cuts under perfect defense. Expert uses its ordinary first-ranked fallback there. That choice affects how well it exploits imperfect defense. |
 
-`ratedDeal` uses the existing six-hex seed space and version 1 generator. After a bijective 24-bit permutation, one bit assigns the first color, a distinct bit assigns the human color, and the other 22 bits choose among small, standard and large. For a uniform seed the two seat bits are independent of one another and of the size stratum. The three strata differ in cardinality by at most one among the $2^{22}$ possible size words. Color placement and geometry follow the original seeded generator. The study uses the same seed for both variants, so their geometries match. They receive separate coefficients.
+`legacyRatedDeal` reproduces this assignment from the six-hex seed space and version 1 generator. After a bijective 24-bit permutation, one bit assigns the first color, a distinct bit assigns the human color, and the other 22 bits choose among small, standard and large. For a uniform seed the two seat bits are independent of one another and of the size stratum. The three strata differ in cardinality by at most one among the $2^{22}$ possible size words. Color placement and geometry follow the original seeded generator. The study uses the same seed for both variants, so their geometries match. They receive separate coefficients.
 
 These untimed gardens have 6–22 standing edges in pieces of at most seven. Rated Expert completes its existing exact branch without consulting the wall clock. After identifying the ground vertices, every surviving piece after a cut is a subset of one original piece. Each remaining Red–Blue piece therefore has at most $2^7$ candidate edge subsets for its local value recurrence. The existing solver can price each legal child by adding the values of its pieces. At this size its dyadic arithmetic is exactly representable. Green uses its existing nimber calculation to find a zero option in a winning position. A proof-favored Expert always has a winning reply chain, by induction on the number of live edges. A gate verifies the size, component and purity assumptions and rejects out-of-family inputs for this clock-free path. An independent reference test checks every descendant of several small generated fields, each side and the chosen move. [Mathematical foundations](MATHEMATICAL_FOUNDATIONS.md)
 

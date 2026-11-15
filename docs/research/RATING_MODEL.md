@@ -1,6 +1,18 @@
 # Opening-Conditioned Rating
 
-Groundwork estimates how a player performs against a fixed family of computer policies on independently dealt gardens. Green and Red–Blue each start at 1000 with rating deviation (RD) 200. Standard is the 1000-point reference within each variant. A rating difference between the two variants has no calibrated interpretation. Daily challenges, custom boards, shared seeds, local duels and practice have no path into these estimates.
+## Current full-garden ladder
+
+Green and Red–Blue each begin at **1200** with a rating deviation (RD) of **200**. Each named opponent has a Chess.com rating label and a separate Hackenbush move policy. Groundwork uses the label as a provisional prior, with 200 points of standard deviation. With a certified perfect-play winner, the initial forecast adds 80 points in favor of that seat. An unknown winner supplies zero signed adjustment. These constants are design assumptions. Paired games on full gardens measure how the deployed policies actually compare. [Bot study](BOT_CALIBRATION.md)
+
+Rating eligibility is established for the human's actual seat and the chosen bot. Two legal continuations ending in opposite results demonstrate that human decisions can change the outcome. A proof that the outcome is fixed, or an opening whose eligibility remains unresolved within the evaluation budget, gives zero rating change. A certified Green win for a perfectly playing Noam is one such fixed outcome. A Red–Blue opening can have two witnessed results against a fallible bot even when its perfect-play winner is unknown.
+
+The filter below still uses Gaussian uncertainty, drift and numerical integration. In a full-garden game the opponent prior and certified-seat adjustment supply the forecast offset. The structural allowance is combined with the named bot's uncertainty. Finishing or resigning an eligible game applies the forecast frozen at the deal. A practice game uses the same board and playing policy and carries no rating weight.
+
+Saved tiny-garden games retain their original bot, map version and forecast. On upgrade, absolute player and legacy bot ratings move up 200 points, including both endpoints of every history entry. This carries forward every previous rating change and win probability. The two pools continue to retain their own counts, uncertainty and match history.
+
+## Historical small-garden model
+
+The following experiments, examples, fitted coefficients and initial ratings are recorded in their original 1000-point coordinate system. Standard was the reference on these legacy gardens. The later full-garden generation does not reuse those coefficients. The synthetic recovery script now centers the same inputs on 1200, so the three simulated skill levels are 1000, 1200 and 1400 with the same relative errors.
 
 ## Paired comparisons and the choice of model
 

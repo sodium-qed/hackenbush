@@ -2,6 +2,7 @@ import { freshSeed, generateBoard } from './generator.js';
 import { CURRENT_BOARD_VERSION, TEXT_BOARD_VERSION, isDailySeed, normalizeMapSeed, normalizeTextSeed, usesMapSeed } from './map-seed.js';
 import { CUSTOM_BOARD_VERSION } from './custom-board.js';
 import { normalizeComputerLevel } from './opponents.js';
+import { RATED_BOARD_VERSION, isRatedBot } from './rated-deal.js';
 import { cutEdge, initialEdges, otherSide, winner } from './rules.js';
 
 const classicVariants = new Set(['green', 'redblue', 'mixed']);
@@ -20,7 +21,7 @@ export function cleanName(value) {
   return Array.from(text).slice(0, 24).join('').trimEnd();
 }
 
-export function normalizePlayers(players, firstSide = 'blue', opponent = 'local') {
+export function normalizePlayers(players, firstSide = 'blue', opponent = 'local', allowRatedBots = false) {
   const seats = {};
   for (const side of sides) {
     const supplied = players?.[side];
@@ -28,7 +29,7 @@ export function normalizePlayers(players, firstSide = 'blue', opponent = 'local'
     const kind = supplied?.kind === 'computer' || supplied?.kind === 'human' ? supplied.kind : defaultKind;
     seats[side] = { name: cleanName(supplied?.name), kind: opponent === 'link' ? 'human' : kind };
     if (seats[side].kind === 'computer' && supplied?.level !== undefined) {
-      seats[side].level = normalizeComputerLevel(supplied.level);
+      seats[side].level = allowRatedBots && isRatedBot(supplied.level) ? supplied.level : normalizeComputerLevel(supplied.level);
     }
   }
   const bothComputers = seats.blue.kind === 'computer' && seats.red.kind === 'computer';
@@ -63,13 +64,18 @@ export function normalizeMatchSeed(seed, boardVersion, opponent) {
   return seed;
 }
 
+function isUntimedMapDuel(boardVersion, opponent, timed) {
+  return boardVersion === RATED_BOARD_VERSION && opponent === 'computer' && timed === false;
+}
+
 function openingPosition(config, boardVersion, newMatch) {
   const { variant = 'green', difficulty = boardDifficulty(boardVersion), opponent = 'local', seat,
     firstSide = 'blue', players, matchId, timed = boardVersion >= 3 } = config;
   const seed = normalizeMatchSeed(config.seed, boardVersion, opponent);
+  const mapDuel = isUntimedMapDuel(boardVersion, opponent, timed);
   if (typeof seed !== 'string' || seed.length > 256 || !supportsBoard(boardVersion, variant, difficulty) ||
       !opponents.has(opponent) || !sides.includes(firstSide) || (seat !== undefined && !sides.includes(seat)) ||
-      typeof timed !== 'boolean' || (boardVersion >= 3 && !timed) ||
+      typeof timed !== 'boolean' || (boardVersion >= 3 && !timed && !mapDuel) ||
       (matchId !== undefined && (typeof matchId !== 'string' || !matchIdPattern.test(matchId)))) {
     throw new Error('Invalid match configuration.');
   }
@@ -78,10 +84,13 @@ function openingPosition(config, boardVersion, newMatch) {
     const other = otherSide(seat);
     assignments = { [seat]: { kind: 'human', ...players?.[seat] }, [other]: { kind: 'computer', ...players?.[other] } };
   }
-  const seats = normalizePlayers(assignments, firstSide, opponent);
+  const seats = normalizePlayers(assignments, firstSide, opponent, mapDuel);
   const humanSide = sides.find(side => seats[side].kind === 'human' && seats[otherSide(side)].kind === 'computer');
-  if (boardVersion === TEXT_BOARD_VERSION && isDailySeed(seed) &&
-      (!humanSide || (seat !== undefined && seat !== humanSide))) {
+  const humanOnDevice = humanSide && (seat === undefined || seat === humanSide);
+  if (mapDuel && (!humanOnDevice || !isRatedBot(seats[otherSide(humanSide)].level))) {
+    throw new Error('An untimed map duel requires one human on this device and one named rated bot.');
+  }
+  if (boardVersion === TEXT_BOARD_VERSION && isDailySeed(seed) && !humanOnDevice) {
     throw new Error('A daily duel requires one human and one computer, with the human on this device.');
   }
   const board = generateBoard(seed, variant, difficulty, boardVersion);
@@ -92,7 +101,7 @@ function openingPosition(config, boardVersion, newMatch) {
     timed, deadline: null, timedOut: null,
   };
   if (matchId !== undefined) game.matchId = matchId;
-  else if (newMatch && (timed || (opponent === 'link' && boardVersion >= 2))) {
+  else if (newMatch && (timed || mapDuel || (opponent === 'link' && boardVersion >= 2))) {
     game.matchId = globalThis.crypto?.randomUUID?.() ?? (freshSeed() + freshSeed() + freshSeed());
   }
   if (opponent === 'link' && boardVersion === 1 && !timed &&
@@ -209,7 +218,7 @@ export function undoTurn(game) {
 export function matchKey({
   seed, variant, difficulty, boardVersion = 1, timed = boardVersion >= 3, firstSide = 'blue', players, opponent = 'local', matchId,
 }) {
-  const seats = normalizePlayers(players, firstSide, opponent);
+  const seats = normalizePlayers(players, firstSide, opponent, isUntimedMapDuel(boardVersion, opponent, timed));
   const map = normalizeMatchSeed(seed, boardVersion, opponent);
   return JSON.stringify([variant, difficulty, map, boardVersion, timed, firstSide, seats.blue, seats.red, matchId ?? null]);
 }

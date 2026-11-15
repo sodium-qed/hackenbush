@@ -1,5 +1,5 @@
 import { cutEdge, legalMoves, otherSide } from './rules.js';
-import { chooseMove } from './strategy.js?v=9';
+import { chooseMove } from './strategy.js?v=10';
 
 export const COMPUTER_LEVELS = Object.freeze({ easy: 'Easy', standard: 'Standard', expert: 'Expert' });
 

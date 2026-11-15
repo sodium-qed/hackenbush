@@ -8,6 +8,7 @@ import { renderLandscape } from './landscape.js';
 import { createPractice } from './practice.js';
 import { createBoard } from './board.js';
 import { drawSeats } from './draw.js';
+import { freshSeed } from './generator.js';
 import { CURRENT_BOARD_VERSION, TEXT_BOARD_VERSION, isDailySeed, nextMapSeed, normalizeMapSeed, normalizeTextSeed, usesMapSeed } from './map-seed.js';
 import { createGuide } from './guide.js';
 import { copyText, decodeTurn, encodeTurn } from './linkplay.js';
@@ -16,9 +17,11 @@ import { timeBoardPreview } from './preview.js';
 import { otherSide } from './rules.js';
 import { TURN_MS, canUndo, createGame, expireTurn, isHumanTurn, matchKey, playCut, receiveLink,
   restoreGame, saveData, startTurnClock, undoTurn } from './session.js';
-import { chooseComputerMove, computerLevelLabel, normalizeComputerLevel } from './opponents.js';
-import { createRatingStore, RATING_KEY } from './rating.js';
-import { createRatedDesk, difficultyRange, signedRating, winPercent } from './rated-ui.js';
+import { COMPUTER_LEVELS, chooseComputerMove, computerLevelLabel, normalizeComputerLevel } from './opponents.js';
+import { RATED_BOT_BY_ID } from './rated-bots.js';
+import { RATED_BOARD_VERSION, ratedBotMove } from './rated-deal.js';
+import { createRatedGame, createRatingStore, RATING_KEY } from './rating.js';
+import { createRatedDesk, difficultyRange, openingSummary, ratedOpponentLabel, signedRating } from './rated-ui.js';
 
 const $ = id => document.getElementById(id);
 const currentKey = 'groundwork.hackenbush.match.v1';
@@ -38,7 +41,8 @@ const guide = createGuide($('guide-dialog'), practiceOptions);
 const analyzer = createAnalyzer($('analyzer-dialog'));
 const ratings = createRatingStore({ prepareOpening: match => runRatedWorker('prepare', match) });
 const ratedDesk = createRatedDesk($('rated-dialog'), {
-  read: () => ratings.read(), onStart: startRated, onForfeit: resignRated, onReset: resetRatings, onReplay: reviewRated
+  read: () => ratings.read(), onStart: startRated, onForfeit: resignRated, onReset: resetRatings,
+  onReplay: reviewRated, onPractice: playGardenPractice
 });
 const builder = createBuilder($('builder-dialog'), { onUse: applyCustomBoard });
 createPractice($('practice-garden'), practiceOptions);
@@ -100,6 +104,7 @@ function setSeedQuery(seed = null, boardVersion = CURRENT_BOARD_VERSION) {
   url.searchParams.delete('board');
   url.searchParams.delete('daily');
   url.searchParams.delete('rules');
+  url.searchParams.delete('bot');
   if (seed && (usesMapSeed(boardVersion) || boardVersion === TEXT_BOARD_VERSION)) {
     url.searchParams.set('seed', seed);
     url.searchParams.set('v', String(boardVersion));
@@ -381,12 +386,12 @@ function startDailyChallenge(seed, level) {
 }
 function runRatedWorker(operation, match) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./rated-worker.js?v=9', import.meta.url), { type: 'module' });
+    const worker = new Worker(new URL('./rated-worker.js?v=10', import.meta.url), { type: 'module' });
     const stop = (success, value) => {
       clearTimeout(timer);
       worker.terminate();
       if (success) resolve(value);
-      else reject(new Error('The rated calculation stopped. You can retry from the saved position.'));
+      else reject(new Error('The bot calculation stopped. Retry from the current position.'));
     };
     const timer = setTimeout(() => stop(false), 30_000);
     worker.onmessage = ({data}) => stop(data.ok, data.result);
@@ -441,32 +446,37 @@ function reviewRated(record) {
   $('rated-dialog').close();
   analyzer.open(replay);
 }
+function isGardenPractice(match) {
+  return match?.opponent === 'computer' && !match.timed && match.matchId?.startsWith('practice-');
+}
+function playGardenPractice({variant, level, seed, boardVersion}, scroll = true) {
+  const id = 'practice-' + freshSeed() + freshSeed() + freshSeed();
+  const practice = createRatedGame(variant, level, seed, id, boardVersion);
+  if ($('rated-dialog').open) $('rated-dialog').close();
+  if (scroll) audio.reveal();
+  activate(practice, {scroll});
+}
 function renderRatedReceipt() {
   const receipt = $('rated-receipt');
   receipt.hidden = !ratedMatch;
   if (!ratedMatch) return;
   const completed = typeof ratedMatch.won === 'boolean';
-  const {opening, expected, bot} = ratedMatch;
+  const label = ratedOpponentLabel(ratedMatch.level, ratedMatch.bot);
   $('rated-receipt-title').textContent = completed ? 'Rating result' : 'Rated match';
-  $('rated-match-rating').textContent = completed ? Math.round(ratedMatch.before) + ' → ' +
+  $('rated-match-opponent').textContent = 'Opponent · ' + label;
+  $('rated-match-opponent').hidden = !completed;
+  $('rated-match-rating').textContent = completed ? 'Your rating ' + Math.round(ratedMatch.before) + ' → ' +
     Math.round(ratedMatch.after) + ' (' + signedRating(ratedMatch.delta) + ')' :
-    computerLevelLabel(ratedMatch.level) + ' · bot rating ' + Math.round(bot.rating);
-  let odds = (completed ? 'Perfect play favored ' + (opening.winner === game.seat ? 'you' : 'the bot') + '. ' : '') +
-    'Opening win estimate ' + winPercent(expected) + '.';
-  if (opening.information === 'forced') {
-    odds = (opening.forcedWinner === game.seat ? 'Your win' : 'A bot win') +
-      ' is forced against this opponent. This deal carries no rating change.';
-  } else if (opening.information === 'unresolved') {
-    odds += ' Rating evidence could not be certified for this deal.';
-  }
-  $('rated-match-odds').textContent = odds;
-  $('rated-match-difficulty').textContent = 'Opening structural difficulty · ' + difficultyRange(opening);
+    label;
+  $('rated-match-odds').textContent = openingSummary(ratedMatch, completed);
+  $('rated-match-difficulty').textContent = 'Opening structural difficulty · ' + difficultyRange(ratedMatch.opening);
+  $('rated-practice').hidden = !completed;
 }
 function paintScenery() {
   if (paintedBoard === game.board) return;
   paintedBoard = game.board;
   const { board } = game;
-  renderLandscape(boardView.landscape, board.world, board.mapSeed || (ratedMatch ? game.seed : 'A35D7E'));
+  renderLandscape(boardView.landscape, board.world, board.mapSeed || (ratedMatch || isGardenPractice(game) ? game.seed : 'A35D7E'));
   // Archived six-landmark boards retain their aligned captions. New landscapes
   // use the entire board and have no fixed horizontal column assignments.
   const legend = $('landmarks');
@@ -486,7 +496,12 @@ function seatDetails(side) {
   const details = [seatLabel(side)];
   if (game.variant !== 'green') details.push(colors[side]);
   const player = game.players[side];
-  details.push(player.kind === 'computer' ? computerLevelLabel(player.level) + ' computer' : 'Human');
+  if (player.kind === 'computer') {
+    const profile = RATED_BOT_BY_ID[player.level];
+    details.push(profile ? profile.elo + ' Elo bot' : computerLevelLabel(player.level) + ' computer');
+  } else {
+    details.push('Human');
+  }
   return details.join(' · ');
 }
 function cutInstruction() {
@@ -495,12 +510,14 @@ function cutInstruction() {
   return 'Cut a ' + game.side + ' branch.';
 }
 function outcome() {
-  if ((ratedMatch || isDailyMatch(game)) && game.side === game.seat) return game.timedOut ? 'You ran out of time.' : 'You have no legal cut.';
+  if ((ratedMatch || isGardenPractice(game) || isDailyMatch(game)) && game.side === game.seat) {
+    return game.timedOut ? 'You ran out of time.' : 'You have no legal cut.';
+  }
   return seatName(game.side) + (game.timedOut ? ' ran out of time.' : ' has no legal cut.');
 }
 function turnMessage() {
   if (game.victor && isDailyMatch(game) && game.victor === game.seat) return 'Daily challenge solved. ' + outcome();
-  if (game.victor && ratedMatch && game.victor === game.seat) return 'You win. ' + outcome();
+  if (game.victor && (ratedMatch || isGardenPractice(game)) && game.victor === game.seat) return 'You win. ' + outcome();
   if (game.victor) return seatName(game.victor) + ' wins. ' + outcome();
   return seatName(game.side) + ' to move. ' + seatDetails(game.side) + '.';
 }
@@ -590,6 +607,7 @@ function renderMatch(animation = {}) {
   const waiting = linked && !won && !human;
   const invite = waiting && !game.moves.length;
   const daily = isDailyMatch(game);
+  const practice = isGardenPractice(game);
   const card = $('turn-card');
   card.dataset.state = won ? 'won' : phase;
   card.dataset.side = game.variant === 'green' ? 'green' : side;
@@ -614,16 +632,19 @@ function renderMatch(animation = {}) {
       ? 'Send the link to ' + seatName(game.side) + '. Their turn starts when they open it.'
       : 'Make a cut, then send the new turn link to the other player.';
   }
-  $('garden-name').textContent = game.board.family || 'Game board';
-  if (ratedMatch) $('garden-name').textContent = rules[game.variant] + ' rated garden';
-  $('daily-match-label').hidden = !daily && !ratedMatch;
+  $('garden-name').textContent = game.board.family || (ratedMatch || practice ? 'Classic garden' : 'Game board');
+  $('daily-match-label').hidden = !daily && !ratedMatch && !practice;
   if (daily) $('daily-match-label').textContent = 'Daily Challenge · ' + dailyDateLabel(game.seed) + ' · ' + computerLevelLabel(dailyMatchLevel(game));
-  if (ratedMatch) $('daily-match-label').textContent = 'Rated · ' + computerLevelLabel(ratedMatch.level) + ' · Untimed';
+  if (ratedMatch || practice) {
+    const level = game.players[otherSide(game.seat)].level;
+    $('daily-match-label').textContent = (ratedMatch ? 'Rated' : 'Unrated practice') + ' · ' +
+      ratedOpponentLabel(level, ratedMatch?.bot) + ' · Untimed';
+  }
   $('new-game').querySelector('span').textContent = ratedMatch && !won ? 'Pause match' : 'New game';
   $('restart').hidden = Boolean(ratedMatch && !won);
   renderRatedReceipt();
   const custom = game.boardVersion === CUSTOM_BOARD_VERSION;
-  const code = usesMapSeed(game.boardVersion) || game.boardVersion === TEXT_BOARD_VERSION ? game.seed : null;
+  const code = ratedMatch || practice || usesMapSeed(game.boardVersion) || game.boardVersion === TEXT_BOARD_VERSION ? game.seed : null;
   paintScenery();
   $('field-branches').textContent = game.live.length + (game.live.length === 1 ? ' branch' : ' branches');
   $('history-count').textContent = String(game.moves.length);
@@ -633,7 +654,8 @@ function renderMatch(animation = {}) {
   $('map-code').hidden = !code;
   $('share-map').title = code || '';
   $('share-map').setAttribute('aria-label', daily ? 'Share daily challenge ' + code : custom ? 'Share custom board' : 'Share map seed ' + (code || ''));
-  $('restart').querySelector('span').textContent = ratedMatch ? 'Rated play' : daily ? (won ? 'Replay challenge' : 'Restart challenge') : 'Rematch';
+  $('restart').querySelector('span').textContent = ratedMatch ? 'Rated play' : practice ? 'Restart practice' :
+    daily ? (won ? 'Replay challenge' : 'Restart challenge') : 'Rematch';
   if (!preview) $('board-caption').textContent = rules[game.variant];
   $('field-label').textContent = won ? 'Final position' : preview ? 'Opening look' : daily ? 'Daily puzzle' : custom ? 'Custom board' : game.boardVersion >= 3 ? 'Expert map' : 'Playing field';
   $('undo').hidden = Boolean(ratedMatch) || game.timed || linked || Object.values(game.players).every(player => player.kind === 'computer');
@@ -706,9 +728,11 @@ function scheduleTurn() {
   if (game !== position || phase !== 'playing' || game.victor || game.opponent === 'link' || game.players[game.side].kind !== 'computer') return;
   computerTimer = setTimeout(async () => {
     if (phase !== 'playing' || game !== position || checkDeadline(Date.now())) return;
-    if (ratedMatch) {
+    if (ratedMatch || isGardenPractice(position)) {
       try {
-        const move = await runRatedWorker('move', position);
+        const { board, live, side, players, seed, moves } = position;
+        const move = typeof Worker === 'function' ? await runRatedWorker('move', position) :
+          ratedBotMove(board, live, side, players[side].level, seed, moves.length);
         if (game === position && phase === 'playing' && move.edgeId !== null) makeMove(move.edgeId);
       } catch (error) {
         if (game === position && phase === 'playing') {
@@ -785,6 +809,7 @@ function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
   }
   const now = Date.now();
   game = expireTurn(next, now);
+  $('rated-retry').hidden = true;
   setSeedQuery();
   previewUntil = !game.victor && Number.isSafeInteger(previewEnd) && previewEnd > now ? Math.min(previewEnd, now + 2000) : 0;
   game = startTurnClock(game, previewUntil || now);
@@ -827,6 +852,7 @@ function loadLocation() {
     }
   }
   ratedMatch = null;
+  if (viewedId) writeStorage(ratedViewKey, null, true);
   if (location.hash.startsWith('#turn=')) {
     const packet = decodeTurn(location.hash);
     if (packet) {
@@ -868,12 +894,21 @@ function loadLocation() {
     const version = Number(query.get('v'));
     const boardVersion = seedVersion(seed, version);
     const variant = ['redblue', 'green'].includes(query.get('rules')) ? query.get('rules') : pending?.variant;
+    const bot = query.get('bot');
+    if (bot && normalizeMapSeed(seed) && ['green', 'redblue'].includes(variant) &&
+        ((version === RATED_BOARD_VERSION && Object.hasOwn(RATED_BOT_BY_ID, bot)) ||
+         (version === 1 && Object.hasOwn(COMPUTER_LEVELS, bot)))) {
+      playGardenPractice({seed, boardVersion: version, variant, level: bot}, false);
+      return;
+    }
     enterLobby({ variant, choices: pending?.choices, seed: seed || requested, boardVersion });
     if (!seed) {
       $('seed-entry').open = true;
       $('map-seed').setCustomValidity(seedError(requested));
       $('map-seed').setAttribute('aria-invalid', 'true');
       feedback(seedError(requested));
+    } else if (bot) {
+      feedback('This bot practice link is incomplete. The seed is ready for a regular match.');
     }
   } else if (pending && ['redblue','green'].includes(pending.variant)) {
     // Unversioned lobby drafts from v3 only carried a seed when rematching.
@@ -881,7 +916,7 @@ function loadLocation() {
     else enterLobby({ ...pending, dailyDate: undefined });
   } else if (isDailyMatch(game) && game.victor && dailySeed() !== game.seed) {
     enterLobby();
-  } else if (game?.boardVersion >= 3 && (game.boardVersion >= CURRENT_BOARD_VERSION || !game.victor)) {
+  } else if (isGardenPractice(game) || (game?.boardVersion >= 3 && (game.boardVersion >= CURRENT_BOARD_VERSION || !game.victor))) {
     activate(game, { previewEnd: saved.previewUntil });
   } else {
     enterLobby();
@@ -894,7 +929,10 @@ for (const id of ['rated-nav', 'open-rated', 'match-ratings']) {
 }
 $('rated-retry').addEventListener('click', () => {
   $('rated-retry').hidden = true;
-  if (ratedMatch && !game.victor) scheduleTurn();
+  if ((ratedMatch || isGardenPractice(game)) && !game.victor) scheduleTurn();
+});
+$('rated-practice').addEventListener('click', () => {
+  if (ratedMatch && typeof ratedMatch.won === 'boolean') playGardenPractice(ratedMatch);
 });
 $('today-puzzle').addEventListener('click', event => {
   if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button > 0) return;
@@ -959,6 +997,7 @@ $('map-seed').addEventListener('input', () => {
 $('restart').addEventListener('click', () => {
   if (phase !== 'playing') return;
   if (ratedMatch) ratedDesk.open(ratedMatch.variant);
+  else if (isGardenPractice(game)) playGardenPractice({...game, level: game.players[otherSide(game.seat)].level});
   else if (isDailyMatch(game)) startDailyChallenge(game.seed, dailyMatchLevel(game));
   else enterLobby({ variant: game.variant, seed: game.boardVersion >= 3 ? game.seed : undefined, boardVersion: game.boardVersion });
 });
@@ -1004,8 +1043,18 @@ function openShare(url, title, description) {
   $('copy-link').focus();
 }
 $('share-map').addEventListener('click', () => {
-  if (!game || game.boardVersion < 4) return;
+  if (!game) return;
   const url = gameUrl();
+  if (ratedMatch || isGardenPractice(game)) {
+    url.searchParams.set('seed', game.seed);
+    url.searchParams.set('v', String(game.boardVersion));
+    url.searchParams.set('rules', game.variant);
+    url.searchParams.set('bot', game.players[otherSide(game.seat)].level);
+    openShare(url, 'Share a practice game', (game.board.family || 'Classic garden') + ' · Seed ' + game.seed +
+      '. Play the same opening against ' + seatName(otherSide(game.seat)) + ' in an unrated game.');
+    return;
+  }
+  if (game.boardVersion < 4) return;
   if (isDailyMatch(game)) {
     url.searchParams.set('daily', game.seed);
     openShare(url, 'Share this daily puzzle', dailyDateLabel(game.seed) + ' · The same garden and starting seat for everyone. Each player chooses their own computer difficulty.');

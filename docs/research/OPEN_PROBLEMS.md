@@ -16,7 +16,7 @@ A human validation study could collect, with consent, first cuts on matched-size
 
 ## Transfer from bots to players
 
-The ladder estimates relative policy strength over the shipped rated distribution. Its origin is conventional. Fixing Standard as the reference gives it zero *relative parameter* uncertainty. A future version of Standard, or a different distribution of positions, can change every comparison. A player's displayed RD describes uncertainty inside this local model. It does not account for every mismatch between bot and human decision making.
+The original experiment estimated relative policy strength on small gardens with Standard fixed as its reference. The current full-garden ladder uses the displayed Chess.com labels as provisional strength assumptions. Paired tests now cover the actual named policies on full maps. A change in policy or in the distribution of boards can change their relative strength. A player's displayed RD describes uncertainty inside this local model. It does not account for every mismatch between bot and human decision making.
 
 Two witnessed lines to opposite outcomes establish that a human's choices can matter. They say nothing about how likely that person is to find either line. Unrated openings with incomplete witness searches may differ systematically from the scoreable sample. Reporting rates of forced, witnessed and unresolved games by variant, bot and size would help quantify that selection effect on a future data set.
 
@@ -24,6 +24,6 @@ The forecast uses a documented allowance for structural difficulty whose coeffic
 
 ## Limits of the rated format
 
-Rated matches use a controlled family of six- to twenty-two-edge gardens. Exact certification of Expert's policy on those components makes the fairness checks possible. Extrapolating the ladder to generated world maps, custom boards, timed games or other bot versions requires new self-play and eligibility experiments. Whether play transfers between Green and Red–Blue is an empirical question. The current implementation keeps separate pools.
+Rated games now use the same full maps as regular six-hex seeds. Exact Green play scales to these networks. The Red–Blue solver can leave the winner unresolved on large cyclic components. The smaller historical census established its own three-policy ladder on six to twenty-two edges. Measuring the named policies against many independent human players, or extending the new ladder to timed and custom games, remains open. Whether play transfers between Green and Red–Blue is an empirical question. The current implementation keeps separate pools.
 
 One unfinished assignment per browser prevents ordinary in-app rerolls. Browser storage can be edited, cleared or lost. Results measure play against local bots on that device. There is no cross-device identity or public ranking.
