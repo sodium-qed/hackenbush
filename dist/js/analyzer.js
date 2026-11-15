@@ -1,9 +1,9 @@
 import { createBoard } from './board.js';
-import { dailyOpening } from './daily.js';
+import { cachedDailyWinner } from './daily.js';
 import { renderLandscape } from './landscape.js';
-import { isDailySeed, TEXT_BOARD_VERSION } from './map-seed.js';
 import { cutEdge, initialEdges, otherSide } from './rules.js';
-import { analyzePosition, dyadicChange } from './analysis-values.js?v=8';
+import { createAnalysisSession, dyadicChange } from './analysis-values.js?v=9';
+import { analysisModes, proofLimit, recentCache } from './analysis-modes.js';
 
 const variants = { green: 'Green', redblue: 'Red–Blue', mixed: 'Mixed' };
 const sideNames = { blue: 'Blue', red: 'Red' };
@@ -59,9 +59,10 @@ function scoreOf(result, concise = false) {
 }
 
 function readoutLabel(result) {
-  if (result.kind === 'green') return 'Green nimber';
-  if (result.kind === 'mixed') return result.lower !== undefined ? 'Bounds on the numeric part' : 'Mixed game value';
-  return result.exact ? 'Red–Blue value' : 'Proven Red–Blue bounds';
+  if (result.kind === 'green') return 'Exact Green nimber';
+  if (result.kind === 'mixed') return result.lower !== undefined ? 'Certified bounds on the numeric part'
+    : result.exact ? 'Exact mixed game value' : 'Mixed game value';
+  return result.exact ? 'Exact Red–Blue value' : 'Certified Red–Blue bounds';
 }
 
 function explanation(result) {
@@ -96,6 +97,32 @@ function icon(name) {
   return '<svg class="icon" aria-hidden="true"><use href="#i-' + name + '"></use></svg>';
 }
 
+const numberFormat = new Intl.NumberFormat('en-US');
+function duration(ms) {
+  if (ms > 0 && ms < 1) return '<1 ms';
+  return ms < 1000 ? Math.round(ms) + ' ms' : Number((ms / 1000).toFixed(2)) + ' s';
+}
+
+function proofStatus(phase, result, mode, reason, improved) {
+  if (phase === 'stopped') return result ? 'Stopped. Your last certificate is shown.' : 'Stopped before the first certificate.';
+  if (phase === 'unavailable') return result ? 'Background search unavailable. Showing the last certificate.'
+    : 'Background search is unavailable in this browser.';
+  if (phase === 'assessing') return 'Assessing legal cuts…';
+  if (phase === 'waiting') return 'Starting background analysis…';
+  if (phase === 'cached') return result?.exact ? 'Exact value certified earlier in this session.'
+    : 'Using the certificate retained for this position.';
+  if (phase === 'searching') return result?.winner ? 'Winner proven. Searching for a sharper value…'
+    : 'Searching for a winner and tighter bounds…';
+  if (reason === 'exact') return 'Exact value certified.';
+  if (reason === 'search-complete') return result?.winner ? 'Winner certified. The exact game form is unresolved.'
+    : 'Search complete. The value and winner remain unresolved.';
+  if (reason === 'node-limit' || reason === 'time-limit') {
+    const limit = mode.label + (reason === 'node-limit' ? ' node limit reached.' : ' time limit reached.');
+    return improved === false ? limit + ' No stronger certificate found in this pass.' : limit;
+  }
+  return '';
+}
+
 export function createAnalyzer(dialog) {
   const id = 'hb-analysis-' + ++nextId;
   dialog.classList.add('hb-analyzer');
@@ -111,6 +138,7 @@ export function createAnalyzer(dialog) {
       </header>
       <p class="hb-analyzer__result">${icon('trophy')}<span data-analysis="result"></span></p>
       <div class="hb-analyzer__layout">
+        <div class="hb-analyzer__bench">
         <section class="hb-analyzer__replay" aria-labelledby="${id}-position">
           <div class="hb-analyzer__position">
             <h3 id="${id}-position" data-analysis="position"></h3>
@@ -126,6 +154,18 @@ export function createAnalyzer(dialog) {
           </div>
           <p class="hb-analyzer__step" id="${id}-step" data-analysis="step"></p>
         </section>
+        <section class="hb-analyzer__controls" aria-label="Search controls">
+          <fieldset class="hb-analyzer__modes" aria-describedby="${id}-limits">
+            <legend>Analysis depth</legend>
+            ${Object.entries(analysisModes).map(([name, mode]) => `<label>
+              <input class="sr-only" type="radio" name="${id}-mode" value="${name}" ${name === 'quick' ? 'checked' : ''}>
+              <span>${mode.label}</span></label>`).join('')}
+          </fieldset>
+          <p class="hb-analyzer__limits" id="${id}-limits" data-analysis="limits"></p>
+          <div class="hb-analyzer__progress"><p data-analysis="progress"></p>
+            <button type="button" data-analysis="stop">Stop search</button></div>
+        </section>
+        </div>
         <section class="hb-analyzer__reading" aria-label="Position analysis">
           <h3 class="hb-analyzer__label" data-analysis="value-label">Position value</h3>
           <p class="hb-analyzer__value" data-analysis="value"></p>
@@ -135,9 +175,19 @@ export function createAnalyzer(dialog) {
           </details>
           <dl class="hb-analyzer__facts">
             <div><dt>To move</dt><dd data-analysis="turn"></dd></div>
-            <div><dt>Untimed winner with perfect play</dt><dd data-analysis="winner"></dd></div>
+            <div><dt>Untimed, perfect-play winner</dt><dd data-analysis="winner"></dd></div>
+            <div><dt>Cumulative proof work</dt><dd data-analysis="effort"
+              title="Nodes count search checkpoints. Time includes structural arithmetic."></dd></div>
             <div data-analysis="change-row"><dt>Change on this cut</dt><dd class="hb-analyzer__change" data-analysis="change"></dd></div>
           </dl>
+          <section class="hb-analyzer__difficulty" aria-labelledby="${id}-difficulty">
+            <h3 class="hb-analyzer__label" id="${id}-difficulty">Structural difficulty estimate</h3>
+            <p class="hb-analyzer__index" data-analysis="difficulty"></p>
+            <p class="hb-analyzer__cuts" data-analysis="cuts"></p>
+            <details class="hb-analyzer__exact" data-analysis="difficulty-details" hidden>
+              <summary>Why this score?</summary><p data-analysis="difficulty-note"></p>
+            </details>
+          </section>
         </section>
       </div>
       <p class="sr-only" role="status" aria-atomic="true" data-analysis="status"></p>
@@ -146,17 +196,44 @@ export function createAnalyzer(dialog) {
   const view = {};
   for (const el of dialog.querySelectorAll('[data-analysis]')) view[el.dataset.analysis] = el;
   const slider = view.slider;
-  let game = null, frames = [], topology = null, renderer = null;
-  let index = 0, worker = null, timer = null, generation = 0;
-  const cache = new Map();
+  const modes = [...dialog.querySelectorAll('[type="radio"]')];
+  const boards = recentCache(3);
+  let game = null, frames = [], topology = null, renderer = null, boardRecord = null;
+  let index = 0, modeName = 'quick', boardSerial = 0, generation = 0;
+  let worker = null, job = null, timer = null, cancelTimer = null, awaitingCancel = null;
+  let phase = 'waiting', reason = null, improved;
   let edgeColors = new Map();
+
+  function frameKey(i) {
+    const frame = frames[i];
+    return frame.key ??= boardRecord.id + '/' + JSON.stringify([frame.side, frame.live]);
+  }
+
+  function recordAt(i) {
+    return i < 0 ? undefined : boardRecord.snapshots.get(frameKey(i));
+  }
 
   function stopWork() {
     generation++;
-    worker?.terminate();
-    worker = null;
     clearTimeout(timer);
     timer = null;
+    if (worker && job !== null) {
+      const previous = worker;
+      awaitingCancel = job;
+      try { worker.postMessage({ type: 'cancel', id: job }); }
+      catch { previous.terminate(); worker = null; awaitingCancel = null; }
+      clearTimeout(cancelTimer);
+      // A suspended worker, or an unusually expensive indivisible operation,
+      // should not keep running after the user stops a search.
+      cancelTimer = setTimeout(() => {
+        if (worker === previous && awaitingCancel !== null) {
+          worker.terminate();
+          worker = null;
+          awaitingCancel = null;
+        }
+      }, 300);
+    }
+    job = null;
   }
 
   function release() {
@@ -166,7 +243,7 @@ export function createAnalyzer(dialog) {
     game = null;
     frames = [];
     topology = null;
-    cache.clear();
+    boardRecord = null;
     edgeColors.clear();
   }
 
@@ -186,9 +263,18 @@ export function createAnalyzer(dialog) {
   }
 
   function showAnalysis() {
-    const current = cache.get(index);
-    const previous = cache.get(index - 1);
+    const record = recordAt(index);
+    const current = record?.result;
+    const previous = recordAt(index - 1)?.result;
     const frame = frames[index];
+    const mode = analysisModes[modeName];
+    const searching = phase === 'waiting' || phase === 'assessing' || phase === 'searching';
+    const message = proofStatus(phase, current, mode, reason, improved);
+    view.progress.textContent = message;
+    view.stop.disabled = !searching && phase !== 'stopped';
+    view.stop.textContent = phase === 'stopped' ? 'Resume search' : 'Stop search';
+    view.limits.textContent = 'Proof budget ' + duration(mode.budgetMs) + ' or ' + numberFormat.format(mode.nodeLimit) +
+      ' nodes. Cut assessment ' + duration(mode.cuts.budgetMs) + '.';
     view['change-row'].hidden = !index;
     if (current) {
       view['value-label'].textContent = readoutLabel(current);
@@ -197,22 +283,49 @@ export function createAnalyzer(dialog) {
       view.explain.textContent = explanation(current);
       view.details.hidden = !longBounds(current);
       if (!view.details.hidden) view.endpoints.textContent = scoreOf(current);
-      view.winner.textContent = current.winner ? player(game, current.winner) : 'Unresolved';
+      view.winner.textContent = current.winner ? player(game, current.winner) + ' · proven' : 'Unresolved';
       view.winner.dataset.side = game.variant === 'green' ? '' : current.winner || '';
-      view.status.textContent = moveLabel() + '. ' + readoutLabel(current) + ' ' + scoreOf(current, true) + '. ' +
-        (current.winner ? player(game, current.winner) + ' can force a win.' : 'Untimed winner unresolved.');
+      view.effort.textContent = numberFormat.format(current.nodes) + (current.nodes === 1 ? ' node' : ' nodes') +
+        ' · ' + duration(current.durationMs);
     } else {
       view['value-label'].textContent = 'Position value';
-      view.value.textContent = 'Calculating…';
+      view.value.textContent = searching ? 'Calculating…' : 'Unresolved';
       view.value.dataset.compact = 'true';
       view.explain.textContent = '';
       view.details.hidden = true;
-      view.winner.textContent = 'Calculating…';
+      view.winner.textContent = searching ? 'Calculating…' : 'Unresolved';
       view.winner.dataset.side = '';
-      view.status.textContent = moveLabel() + '. Calculating position value.';
+      view.effort.textContent = '—';
     }
+    const grade = record?.difficulty;
+    view.difficulty.textContent = grade ? (grade.complete ? grade.score : grade.lower + '–' + grade.upper) + ' / 100' : '—';
+    view['difficulty-details'].hidden = !grade;
+    if (grade) {
+      if (!grade.legalMoves) view.cuts.textContent = 'No legal cuts.';
+      else if (grade.unknownMoves === grade.legalMoves) view.cuts.textContent = grade.legalMoves +
+        (grade.legalMoves === 1 ? ' legal cut remains unresolved.' : ' legal cuts remain unresolved.');
+      else view.cuts.textContent = grade.winningMoves + ' proven winning · ' + grade.losingMoves + ' proven losing' +
+        (grade.unknownMoves ? ' · ' + grade.unknownMoves + ' unresolved.' : '.');
+      const { instantWins, concealedLosses } = grade.tactics;
+      let note = 'The Cut Discrimination Index combines the risk of missing a winning cut with the structure of the graph.';
+      if (!grade.legalMoves) note = 'No decision remains for the player to move.';
+      else if (grade.winner && grade.winner !== frame.side) note += ' Every legal cut loses here, so only the graph contributes.';
+      else if (instantWins) note += ' At least one cut wins immediately.';
+      else if (concealedLosses) note += ' A one-reply check misses ' + concealedLosses + ' losing ' +
+        (concealedLosses === 1 ? 'cut.' : 'cuts.');
+      if (grade.legalMoves && grade.topology.measured) note += ' The grounded graph has ' + grade.topology.bridges +
+        (grade.topology.bridges === 1 ? ' bridge' : ' bridges') + ' and cycle rank ' + grade.topology.cycleRank + '.';
+      note += ' The cut assessment used ' + numberFormat.format(grade.effort.nodes) +
+        (grade.effort.nodes === 1 ? ' node in ' : ' nodes in ') + duration(grade.effort.durationMs) + '.';
+      view['difficulty-note'].textContent = note;
+    } else view.cuts.textContent = searching ? 'Legal cuts are assessed after the proof search.'
+      : phase === 'stopped' ? 'Assessment paused.' : 'Cut assessment unavailable.';
+    const announcement = moveLabel() + '. ' + (current ? readoutLabel(current) + ' ' + scoreOf(current, true) + '. ' +
+      (current.winner ? player(game, current.winner) + ' can force a win. ' : '') : '') + message;
+    // Node totals may change every slice. Announce only certificate and status changes.
+    if (view.status.textContent !== announcement) view.status.textContent = announcement;
     if (index) {
-      if (!current || !previous) view.change.textContent = 'Comparing positions…';
+      if (!current || !previous) view.change.textContent = searching || job !== null ? 'Comparing positions…' : 'Comparison unavailable.';
       else {
         let description = scoreOf(previous, true) + ' → ' + scoreOf(current, true);
         if (previous.kind === 'redblue' && current.kind === 'redblue' && previous.exact && current.exact) {
@@ -228,62 +341,128 @@ export function createAnalyzer(dialog) {
   }
 
   function startWork() {
+    if (!game || !dialog.open) return;
     const token = generation;
-    const positions = [index, index - 1].filter(i => i >= 0 && !cache.has(i))
-      .map(i => ({ index: i, live: frames[i].live, side: frames[i].side }));
-    if (!positions.length) return;
-
-    function active() { return token === generation && game && dialog.open; }
-    function received(i, result) {
-      if (!active()) return;
-      if (i === 0 && !result.winner && game.boardVersion === TEXT_BOARD_VERSION && isDailySeed(game.seed)) {
-        const opening = dailyOpening(game.seed);
-        if (opening.variant === game.variant && opening.firstSide === game.firstSide) result = { ...result, winner: opening.humanSide };
-      }
-      cache.set(i, result);
-      showAnalysis();
+    const mode = analysisModes[modeName];
+    const current = recordAt(index);
+    const limit = proofLimit(current?.result, mode);
+    const grade = current?.difficulty;
+    const cutsReady = grade && (current.difficultyRank >= mode.rank || (grade.complete && grade.coverage === 1)) &&
+      (!current.result.winner || current.result.winner === grade.winner);
+    const positions = [];
+    function add(i, selected) {
+      positions.push({ index: i, key: frameKey(i), live: frames[i].live, side: frames[i].side,
+        mode: selected ? modeName : 'quick', assessCuts: selected, cached: recordAt(i),
+        dailyWinner: i === 0 ? cachedDailyWinner(game.seed, topology, game.variant, game.firstSide) : null });
     }
+    if (!limit || !cutsReady) add(index, true);
+    else {
+      phase = 'cached';
+      reason = limit;
+      improved = current.improved;
+    }
+    if (index && !recordAt(index - 1)?.result) add(index - 1, false);
+    if (!positions.length) { showAnalysis(); return; }
+    job = token;
+    clearTimeout(cancelTimer);
+    awaitingCancel = null;
+    showAnalysis();
+
+    function active() { return job === token && generation === token && game && dialog.open; }
+
     function fallback() {
+      if (!active()) return;
       worker?.terminate();
       worker = null;
-      // Browsers that disallow module workers can still price trees and Green
-      // boards and show certified intervals without a long main-thread search.
-      const queue = positions.filter(p => !cache.has(p.index));
+      // No recursive search or cut survey on the main thread. Small positions
+      // still get exact structural arithmetic; larger positions keep any
+      // certificate already returned by a worker.
       function next() {
-        if (!active() || !queue.length) return;
-        const p = queue.shift();
-        received(p.index, analyzePosition(topology, p.live, p.side, game.variant, { budgetMs: 8 }));
-        if (queue.length) timer = setTimeout(next, 0);
+        if (!active()) return;
+        const position = positions.shift();
+        const cached = recordAt(position.index) || {};
+        let result = cached.result;
+        const lowCost = position.live.length <= 64 || (game.variant === 'green' && position.live.length <= 256);
+        if (!result && lowCost && topology.edges.length <= 512) {
+          try {
+            const session = createAnalysisSession(topology, position.live, position.side, game.variant, { maxEntries: 64 });
+            result = session.refine({ budgetMs: 0, nodeLimit: 0 });
+          } catch { /* Leave the result unresolved if structural evaluation also fails. */ }
+        }
+        if (!result && game.variant === 'redblue') {
+          const started = performance.now();
+          const blue = position.live.filter(id => edgeColors.get(id) === 'blue').length;
+          const red = position.live.length - blue;
+          // Each Red–Blue number lies between the costs of all its red and
+          // all its blue edges. These inclusive bounds require no search.
+          const value = blue && red ? { exact: false, lower: String(-red), upper: String(blue),
+            lowerOpen: false, upperOpen: false, winner: null } : { exact: true, number: String(blue - red),
+            winner: blue ? 'blue' : red ? 'red' : otherSide(position.side) };
+          result = { ...value, kind: 'redblue', nimber: 0, nodes: 0, cacheHits: 0,
+            durationMs: performance.now() - started, status: value.exact ? 'exact' : 'unavailable' };
+        }
+        if (result && position.dailyWinner && !result.winner) result = { ...result, winner: position.dailyWinner };
+        if (result) boardRecord.snapshots.set(position.key, { ...cached, result });
+        if (position.index === index) phase = 'unavailable';
+        if (positions.length) timer = setTimeout(next, 0);
+        else job = null;
+        showAnalysis();
       }
       timer = setTimeout(next, 0);
     }
 
     if (typeof Worker !== 'function') { fallback(); return; }
     try {
-      worker = new Worker(new URL('./analysis-worker.js?v=8', import.meta.url), { type: 'module' });
+      worker ??= new Worker(new URL('./analysis-worker.js?v=9', import.meta.url), { type: 'module' });
+      const source = worker;
       worker.onmessage = ({ data }) => {
-        if (!active()) return;
-        received(data.index, data.result);
-        if (positions.every(p => cache.has(p.index))) {
+        if (worker !== source) return;
+        if (data.type === 'cancelled') {
+          if (awaitingCancel === data.id) { clearTimeout(cancelTimer); awaitingCancel = null; }
+          return;
+        }
+        if (!active() || data.id !== token) return;
+        if (data.type === 'error') { fallback(); return; }
+        if (data.type === 'done') { job = null; showAnalysis(); return; }
+        if (data.type !== 'update' || !positions.some(position => position.index === data.index)) return;
+        const stored = { result: data.result, difficulty: data.difficulty, difficultyRank: data.difficultyRank,
+          improved: data.improved };
+        boardRecord.snapshots.set(frameKey(data.index), stored);
+        if (data.index === index) {
+          phase = data.phase === 'finished' && data.reused ? 'cached' : data.phase;
+          reason = data.reason;
+          improved = data.improved;
+        }
+        showAnalysis();
+      };
+      worker.onmessageerror = worker.onerror = event => {
+        event.preventDefault();
+        if (worker === source) {
           worker.terminate();
           worker = null;
+          fallback();
         }
       };
-      worker.onerror = event => {
-        event.preventDefault();
-        if (active()) fallback();
-      };
-      worker.postMessage({ board: topology, variant: game.variant, positions });
+      worker.postMessage({ type: 'start', id: token, board: topology, variant: game.variant, positions });
     } catch { fallback(); }
+  }
+
+  function queueWork() {
+    stopWork();
+    phase = 'waiting';
+    reason = null;
+    improved = undefined;
+    showAnalysis();
+    timer = setTimeout(startWork, 0);
   }
 
   function select(next) {
     if (!game || next < 0 || next >= frames.length) return;
-    stopWork();
     index = next;
     const frame = frames[index];
     const last = frames.length - 1;
     view.details.open = false;
+    view['difficulty-details'].open = false;
     view.position.textContent = moveLabel();
     view.count.textContent = branches(frame.live.length);
     view.step.textContent = describeMove();
@@ -299,8 +478,7 @@ export function createAnalyzer(dialog) {
     const contents = colors.length ? colors.join(', ') + (frame.live.length === 1 ? ' branch.' : ' branches.') : 'No branches remain.';
     view.diagram.setAttribute('aria-label', moveLabel() + '. ' + contents);
     renderer.update({ board: game.board, live: frame.live, side: frame.side, locked: true, reset: true });
-    showAnalysis();
-    timer = setTimeout(startWork, 0);
+    queueWork();
   }
 
   function open(match) {
@@ -316,6 +494,10 @@ export function createAnalyzer(dialog) {
       nodes: match.board.nodes.map(({ id, ground }) => ({ id, ground })),
       edges: match.board.edges.map(({ id, a, b, color }) => ({ id, a, b, color }))
     };
+    const signature = JSON.stringify([match.variant, topology]);
+    boardRecord = boards.get(signature) || boards.set(signature, { id: ++boardSerial, snapshots: recentCache(64) });
+    modeName = 'quick';
+    for (const input of modes) input.checked = input.value === modeName;
     const mapName = [variants[match.variant] || 'Hackenbush', match.board.family, match.board.mapSeed].filter(Boolean);
     view.map.textContent = mapName.join(' · ');
     view.result.textContent = player(match, match.victor) + ' won ' + (match.timedOut
@@ -335,12 +517,23 @@ export function createAnalyzer(dialog) {
     release();
   }
 
+  for (const input of modes) input.addEventListener('change', () => {
+    if (!game || !input.checked) return;
+    modeName = input.value;
+    queueWork();
+  });
+  view.stop.addEventListener('click', () => {
+    if (phase === 'stopped') { queueWork(); return; }
+    stopWork();
+    phase = 'stopped';
+    showAnalysis();
+  });
   view.close.addEventListener('click', close);
   view.previous.addEventListener('click', () => select(index - 1));
   view.next.addEventListener('click', () => select(index + 1));
   slider.addEventListener('input', () => select(Number(slider.value)));
   dialog.addEventListener('keydown', event => {
-    if (event.target === slider || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+    if (event.target.matches('input, select, textarea') || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
       select(index + (event.key === 'ArrowLeft' ? -1 : 1));

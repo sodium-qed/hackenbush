@@ -17,6 +17,8 @@ import { otherSide } from './rules.js';
 import { TURN_MS, canUndo, createGame, expireTurn, isHumanTurn, matchKey, playCut, receiveLink,
   restoreGame, saveData, startTurnClock, undoTurn } from './session.js';
 import { chooseComputerMove, computerLevelLabel, normalizeComputerLevel } from './opponents.js';
+import { createRatingStore, RATING_KEY } from './rating.js';
+import { createRatedDesk, difficultyRange, signedRating, winPercent } from './rated-ui.js';
 
 const $ = id => document.getElementById(id);
 const currentKey = 'groundwork.hackenbush.match.v1';
@@ -26,6 +28,7 @@ const entrantsKey = 'groundwork.hackenbush.entrants.v3';
 const dealKey = 'groundwork.hackenbush.map-deal.v4';
 const dailyLevelKey = 'groundwork.hackenbush.daily-level.v1';
 const sceneryKey = 'groundwork.hackenbush.scenery.v1';
+const ratedViewKey = 'groundwork.hackenbush.rated-view.v1';
 const dailyDateFormat = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const colors = { green: 'Green', red: 'Red', blue: 'Blue' };
 const rules = { green: 'Green', redblue: 'Red–Blue', mixed: 'Red–Blue + green' };
@@ -33,6 +36,10 @@ const audio = createAudio({ button: $('sound-nav'), dialog: $('sound-dialog') })
 const practiceOptions = { onCut: details => audio.cut(details) };
 const guide = createGuide($('guide-dialog'), practiceOptions);
 const analyzer = createAnalyzer($('analyzer-dialog'));
+const ratings = createRatingStore({ prepareOpening: match => runRatedWorker('prepare', match) });
+const ratedDesk = createRatedDesk($('rated-dialog'), {
+  read: () => ratings.read(), onStart: startRated, onForfeit: resignRated, onReset: resetRatings, onReplay: reviewRated
+});
 const builder = createBuilder($('builder-dialog'), { onUse: applyCustomBoard });
 createPractice($('practice-garden'), practiceOptions);
 const playerForm = createPlayers($('players-view'), { onStart: deal, onChange: saveDraft });
@@ -51,6 +58,8 @@ let dailyCardTimer = null;
 let dealing = false;
 let localDealState = null;
 let paintedBoard = null;
+let ratedMatch = null;
+let ratedMovePending = false;
 
 function readStorage(key, tabOnly = false) {
   try { return JSON.parse((tabOnly ? sessionStorage : localStorage).getItem(key)); } catch { return null; }
@@ -67,6 +76,10 @@ function linkGames() {
   return Array.isArray(saved) ? saved.filter(item => item && typeof item === 'object') : [];
 }
 function persist() {
+  if (ratedMatch) {
+    writeStorage(ratedViewKey, ratedMatch.id, true);
+    return;
+  }
   const data = saveData(game);
   if (game.victor) recordDailyResult(game);
   if (previewUntil) data.previewUntil = previewUntil;
@@ -163,6 +176,13 @@ function updateRules() {
 }
 function enterLobby({ variant, seed, choices, legacySeed, boardVersion, customCode, dailyDate } = {}) {
   cancelTimers();
+  if (ratedMatch) {
+    ratedMatch = null;
+    game = restoreGame(readStorage(currentKey));
+  }
+  writeStorage(ratedViewKey, null, true);
+  $('rated-receipt').hidden = true;
+  $('rated-retry').hidden = true;
   if ($('analyzer-dialog').open) $('analyzer-dialog').close();
   const previous = lobby || game;
   const candidate = customCode ?? (boardVersion === CUSTOM_BOARD_VERSION ? seed : null);
@@ -359,11 +379,94 @@ function startDailyChallenge(seed, level) {
   audio.reveal();
   activate(next, { previewEnd: Date.now() + 2000, scroll: true });
 }
+function runRatedWorker(operation, match) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(new URL('./rated-worker.js?v=9', import.meta.url), { type: 'module' });
+    const stop = (success, value) => {
+      clearTimeout(timer);
+      worker.terminate();
+      if (success) resolve(value);
+      else reject(new Error('The rated calculation stopped. You can retry from the saved position.'));
+    };
+    const timer = setTimeout(() => stop(false), 30_000);
+    worker.onmessage = ({data}) => stop(data.ok, data.result);
+    worker.onerror = () => stop(false);
+    worker.onmessageerror = () => stop(false);
+    worker.postMessage({operation, game: match});
+  });
+}
+function ratedFailure(reason) {
+  const descriptions = {
+    unavailable: 'Rated play needs writable local browser storage.',
+    invalid: 'The rated record could not be read. Open Rated play to reset it.',
+    newer: 'This saved record needs a newer version of Groundwork.',
+    stale: 'Another tab changed this match. Reopen Rated play for the latest position.',
+    'prepare-failed': 'The rated worker could not prepare this garden. Retry to draw your match.',
+    exhausted: 'This device has completed every deal in this rating pool.'
+  };
+  return descriptions[reason] || 'The rated action could not be saved. Reopen Rated play to try again.';
+}
+function enterRated(entry, scroll = false) {
+  const match = restoreGame(entry?.game);
+  if (!match || match.matchId !== entry.id) throw new Error('The saved rated match could not be restored.');
+  ratedMatch = entry;
+  $('rated-retry').hidden = true;
+  activate(match, {scroll});
+}
+async function startRated(variant, level) {
+  if (typeof Worker !== 'function') throw new Error('Rated play needs a browser with Web Worker support.');
+  const result = await ratings.start(variant, level);
+  if (!result.ok) throw new Error(ratedFailure(result.reason));
+  if (!$('rated-dialog').open) return;
+  $('rated-dialog').close();
+  audio.reveal();
+  enterRated(result.active, true);
+}
+async function resignRated(id) {
+  const result = await ratings.forfeit(id);
+  if (!result.ok) throw new Error(ratedFailure(result.reason));
+  if (ratedMatch?.id === id) enterLobby({variant: ratedMatch.variant});
+  const message = result.record.reason === 'forfeit' ? 'Resignation recorded.' : 'This match had already ended.';
+  return message + ' Rating change ' + signedRating(result.record.delta) + '.';
+}
+async function resetRatings() {
+  const result = await ratings.reset();
+  if (!result.ok) throw new Error(ratedFailure(result.reason));
+  if (ratedMatch) enterLobby();
+  return 'Both rating histories have been reset.';
+}
+function reviewRated(record) {
+  const replay = restoreGame(record.game);
+  if (!replay?.victor) return;
+  $('rated-dialog').close();
+  analyzer.open(replay);
+}
+function renderRatedReceipt() {
+  const receipt = $('rated-receipt');
+  receipt.hidden = !ratedMatch;
+  if (!ratedMatch) return;
+  const completed = typeof ratedMatch.won === 'boolean';
+  const {opening, expected, bot} = ratedMatch;
+  $('rated-receipt-title').textContent = completed ? 'Rating result' : 'Rated match';
+  $('rated-match-rating').textContent = completed ? Math.round(ratedMatch.before) + ' → ' +
+    Math.round(ratedMatch.after) + ' (' + signedRating(ratedMatch.delta) + ')' :
+    computerLevelLabel(ratedMatch.level) + ' · bot rating ' + Math.round(bot.rating);
+  let odds = (completed ? 'Perfect play favored ' + (opening.winner === game.seat ? 'you' : 'the bot') + '. ' : '') +
+    'Opening win estimate ' + winPercent(expected) + '.';
+  if (opening.information === 'forced') {
+    odds = (opening.forcedWinner === game.seat ? 'Your win' : 'A bot win') +
+      ' is forced against this opponent. This deal carries no rating change.';
+  } else if (opening.information === 'unresolved') {
+    odds += ' Rating evidence could not be certified for this deal.';
+  }
+  $('rated-match-odds').textContent = odds;
+  $('rated-match-difficulty').textContent = 'Opening structural difficulty · ' + difficultyRange(opening);
+}
 function paintScenery() {
   if (paintedBoard === game.board) return;
   paintedBoard = game.board;
   const { board } = game;
-  renderLandscape(boardView.landscape, board.world, board.mapSeed || 'A35D7E');
+  renderLandscape(boardView.landscape, board.world, board.mapSeed || (ratedMatch ? game.seed : 'A35D7E'));
   // Archived six-landmark boards retain their aligned captions. New landscapes
   // use the entire board and have no fixed horizontal column assignments.
   const legend = $('landmarks');
@@ -392,11 +495,12 @@ function cutInstruction() {
   return 'Cut a ' + game.side + ' branch.';
 }
 function outcome() {
-  if (isDailyMatch(game) && game.side === game.seat) return game.timedOut ? 'You ran out of time.' : 'You have no legal cut.';
+  if ((ratedMatch || isDailyMatch(game)) && game.side === game.seat) return game.timedOut ? 'You ran out of time.' : 'You have no legal cut.';
   return seatName(game.side) + (game.timedOut ? ' ran out of time.' : ' has no legal cut.');
 }
 function turnMessage() {
   if (game.victor && isDailyMatch(game) && game.victor === game.seat) return 'Daily challenge solved. ' + outcome();
+  if (game.victor && ratedMatch && game.victor === game.seat) return 'You win. ' + outcome();
   if (game.victor) return seatName(game.victor) + ' wins. ' + outcome();
   return seatName(game.side) + ' to move. ' + seatDetails(game.side) + '.';
 }
@@ -511,8 +615,13 @@ function renderMatch(animation = {}) {
       : 'Make a cut, then send the new turn link to the other player.';
   }
   $('garden-name').textContent = game.board.family || 'Game board';
-  $('daily-match-label').hidden = !daily;
+  if (ratedMatch) $('garden-name').textContent = rules[game.variant] + ' rated garden';
+  $('daily-match-label').hidden = !daily && !ratedMatch;
   if (daily) $('daily-match-label').textContent = 'Daily Challenge · ' + dailyDateLabel(game.seed) + ' · ' + computerLevelLabel(dailyMatchLevel(game));
+  if (ratedMatch) $('daily-match-label').textContent = 'Rated · ' + computerLevelLabel(ratedMatch.level) + ' · Untimed';
+  $('new-game').querySelector('span').textContent = ratedMatch && !won ? 'Pause match' : 'New game';
+  $('restart').hidden = Boolean(ratedMatch && !won);
+  renderRatedReceipt();
   const custom = game.boardVersion === CUSTOM_BOARD_VERSION;
   const code = usesMapSeed(game.boardVersion) || game.boardVersion === TEXT_BOARD_VERSION ? game.seed : null;
   paintScenery();
@@ -524,11 +633,11 @@ function renderMatch(animation = {}) {
   $('map-code').hidden = !code;
   $('share-map').title = code || '';
   $('share-map').setAttribute('aria-label', daily ? 'Share daily challenge ' + code : custom ? 'Share custom board' : 'Share map seed ' + (code || ''));
-  $('restart').querySelector('span').textContent = daily ? (won ? 'Replay challenge' : 'Restart challenge') : 'Rematch';
+  $('restart').querySelector('span').textContent = ratedMatch ? 'Rated play' : daily ? (won ? 'Replay challenge' : 'Restart challenge') : 'Rematch';
   if (!preview) $('board-caption').textContent = rules[game.variant];
   $('field-label').textContent = won ? 'Final position' : preview ? 'Opening look' : daily ? 'Daily puzzle' : custom ? 'Custom board' : game.boardVersion >= 3 ? 'Expert map' : 'Playing field';
-  $('undo').hidden = game.timed || linked || Object.values(game.players).every(player => player.kind === 'computer');
-  $('undo').disabled = !canUndo(game);
+  $('undo').hidden = Boolean(ratedMatch) || game.timed || linked || Object.values(game.players).every(player => player.kind === 'computer');
+  $('undo').disabled = Boolean(ratedMatch) || !canUndo(game);
   showKey();
   renderRoster();
   if ($('history-panel').open) renderHistory();
@@ -547,6 +656,21 @@ function newerStoredPosition() {
   return restoreGame(latest);
 }
 function syncPosition() {
+  if (ratedMatch) {
+    const state = ratings.read();
+    if (state.status !== 'ok') return false;
+    const latest = state.active?.id === ratedMatch.id ? state.active : state.history.find(row => row.id === ratedMatch.id);
+    if (!latest || latest.reason === 'forfeit') {
+      enterLobby({variant: ratedMatch.variant});
+      feedback(latest ? 'This rated match was resigned.' : 'The rated record changed in another tab.');
+      return true;
+    }
+    if (!sameMoves(latest.game.moves, game.moves) || latest.reason !== ratedMatch.reason) {
+      enterRated(latest);
+      return true;
+    }
+    return false;
+  }
   const updated = newerStoredPosition();
   if (!updated) return false;
   activate(updated, { note: 'The match advanced in another tab.' });
@@ -580,18 +704,59 @@ function scheduleTurn() {
   const position = game;
   tick();
   if (game !== position || phase !== 'playing' || game.victor || game.opponent === 'link' || game.players[game.side].kind !== 'computer') return;
-  computerTimer = setTimeout(() => {
+  computerTimer = setTimeout(async () => {
     if (phase !== 'playing' || game !== position || checkDeadline(Date.now())) return;
+    if (ratedMatch) {
+      try {
+        const move = await runRatedWorker('move', position);
+        if (game === position && phase === 'playing' && move.edgeId !== null) makeMove(move.edgeId);
+      } catch (error) {
+        if (game === position && phase === 'playing') {
+          feedback(error.message);
+          $('rated-retry').hidden = false;
+        }
+      }
+      return;
+    }
     const move = chooseComputerMove(game.board, game.live, game.side, game.players[game.side].level);
     if (move.edgeId !== null) makeMove(move.edgeId);
   }, 700);
 }
-function makeMove(id) {
-  if (phase !== 'playing' || game.victor || syncPosition()) return;
+async function makeMove(id) {
+  if (phase !== 'playing' || game.victor || (ratedMatch && ratedMovePending) || syncPosition()) return;
   const now = Date.now();
   if (checkDeadline(now)) return;
   const next = playCut(game, id, now);
   if (!next) return;
+  if (ratedMatch) {
+    const previous = game;
+    ratedMovePending = true;
+    try {
+      const result = next.victor ? await ratings.finish(next) : await ratings.checkpoint(next);
+      if (game !== previous || phase !== 'playing') return;
+      if (!result.ok) {
+        if (!syncPosition()) {
+          feedback(ratedFailure(result.reason));
+          $('rated-retry').hidden = isHumanTurn(game);
+        }
+        return;
+      }
+      if (result.record && (result.record.reason === 'forfeit' || !sameMoves(result.record.game.moves, next.moves))) {
+        syncPosition();
+        return;
+      }
+      ratedMatch = next.victor ? result.record : result.active;
+    } catch {
+      if (game === previous) {
+        feedback('This cut could not be saved. Retry from the current position.');
+        $('rated-retry').hidden = isHumanTurn(game);
+      }
+      return;
+    } finally {
+      ratedMovePending = false;
+    }
+  }
+  $('rated-retry').hidden = true;
   game = startTurnClock(next, now);
   const last = game.rows.at(-1);
   feedback();
@@ -614,6 +779,10 @@ function endPreview() {
 }
 function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
   cancelTimers();
+  if (ratedMatch && ratedMatch.id !== next.matchId) {
+    ratedMatch = null;
+    writeStorage(ratedViewKey, null, true);
+  }
   const now = Date.now();
   game = expireTurn(next, now);
   setSeedQuery();
@@ -647,6 +816,17 @@ function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
 }
 function loadLocation() {
   const saved = readStorage(currentKey);
+  const query = new URL(location.href).searchParams;
+  const viewedId = readStorage(ratedViewKey, true);
+  if (viewedId && !location.hash.startsWith('#turn=') && !['daily', 'seed', 'board'].some(key => query.has(key))) {
+    const state = ratings.read();
+    const entry = state.active?.id === viewedId ? state.active : state.history?.find(row => row.id === viewedId);
+    if (entry?.game && entry.reason !== 'forfeit' && restoreGame(entry.game)) {
+      enterRated(entry);
+      return;
+    }
+  }
+  ratedMatch = null;
   if (location.hash.startsWith('#turn=')) {
     const packet = decodeTurn(location.hash);
     if (packet) {
@@ -667,7 +847,6 @@ function loadLocation() {
   game = restoreGame(saved);
   if (game?.victor) recordDailyResult(game);
   const pending = readStorage(lobbyKey, true);
-  const query = new URL(location.href).searchParams;
   if (query.has('daily')) {
     const day = query.get('daily');
     enterLobby({ choices: pending?.choices, dailyDate: day });
@@ -710,6 +889,13 @@ function loadLocation() {
 }
 
 $('new-game').addEventListener('click', () => enterLobby());
+for (const id of ['rated-nav', 'open-rated', 'match-ratings']) {
+  $(id).addEventListener('click', () => ratedDesk.open(ratedMatch?.variant ?? lobby?.variant ?? game?.variant));
+}
+$('rated-retry').addEventListener('click', () => {
+  $('rated-retry').hidden = true;
+  if (ratedMatch && !game.victor) scheduleTurn();
+});
 $('today-puzzle').addEventListener('click', event => {
   if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey || event.button > 0) return;
   event.preventDefault();
@@ -772,11 +958,12 @@ $('map-seed').addEventListener('input', () => {
 });
 $('restart').addEventListener('click', () => {
   if (phase !== 'playing') return;
-  if (isDailyMatch(game)) startDailyChallenge(game.seed, dailyMatchLevel(game));
+  if (ratedMatch) ratedDesk.open(ratedMatch.variant);
+  else if (isDailyMatch(game)) startDailyChallenge(game.seed, dailyMatchLevel(game));
   else enterLobby({ variant: game.variant, seed: game.boardVersion >= 3 ? game.seed : undefined, boardVersion: game.boardVersion });
 });
 $('undo').addEventListener('click', () => {
-  if (phase === 'playing' && canUndo(game)) activate(undoTurn(game), { note: 'Turn taken back.' });
+  if (phase === 'playing' && !ratedMatch && canUndo(game)) activate(undoTurn(game), { note: 'Turn taken back.' });
 });
 $('zoom').addEventListener('click', () => setZoom($('zoom').getAttribute('aria-pressed') !== 'true'));
 $('scenery-toggle').addEventListener('click', () => {
@@ -859,6 +1046,10 @@ function refreshTime() {
 document.addEventListener('visibilitychange', refreshTime);
 window.addEventListener('pageshow', refreshTime);
 window.addEventListener('storage', event => {
+  if (event.key === RATING_KEY || event.key === null) {
+    if (ratedMatch) syncPosition();
+    ratedDesk.refresh();
+  }
   if (event.key === sceneryKey) setScenery(readStorage(sceneryKey) !== false);
   if (phase === 'ready') refreshDailyCard();
   if (game && phase !== 'ready' && (event.key === currentKey || event.key === linksKey)) syncPosition();

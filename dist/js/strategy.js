@@ -91,6 +91,7 @@ function inspect(graph, mask, origin = 0) {
   const parts = [];
   let time = 0;
   let cycleRank = 0;
+  let articulations = 0;
   let seen = 0n;
 
   function visit(v) {
@@ -100,6 +101,7 @@ function inspect(graph, mask, origin = 0) {
     let number = 0;
     let estimate = 0;
     let cyclic = 0n;
+    let separates = false;
     for (let remaining = incident[v] & mask; remaining; remaining &= remaining - 1n) {
       const bit = remaining & -remaining;
       if (seen & bit) continue;
@@ -119,6 +121,7 @@ function inspect(graph, mask, origin = 0) {
         part |= child.mask;
         cyclic |= child.cyclic;
         low[v] = Math.min(low[v], low[w]);
+        if (low[w] >= entry[v]) separates = true;
         if (low[w] > entry[v]) {
           drops[index] = part;
           partNim = child.nim + 1;
@@ -145,11 +148,12 @@ function inspect(graph, mask, origin = 0) {
       estimate += partEstimate;
       if (v === origin) parts.push({ mask: part, nim: partNim, number: partNumber });
     }
+    if (v !== origin && separates) articulations++;
     return { mask: branchMask, nim, number, estimate, cyclic };
   }
 
   const root = visit(origin);
-  return { ...root, drops, parts, cycleRank };
+  return { ...root, drops, parts, cycleRank, articulations };
 }
 
 export { prepare as prepareGraph, inspect as inspectGraph };
@@ -201,7 +205,7 @@ function makeSolver(graph, opening, deadline) {
   let visits = 0;
 
   function checkTime() {
-    if ((visits++ & clockMask) === 0 && performance.now() >= deadline) throw TIME_UP;
+    if (deadline !== Infinity && (visits++ & clockMask) === 0 && performance.now() >= deadline) throw TIME_UP;
   }
 
   // A cut changes only its original grounded component. Reuse that component's
@@ -436,13 +440,20 @@ function largeBoardMove(board, live, side, deadline) {
 }
 
 /** Return a legal cut, and a normal-play proof when the search establishes it. */
-export function chooseMove(board, live, side, { budgetMs = 110 } = {}) {
+export function chooseMove(board, live, side, { budgetMs = 110, completeSmallComponents = false } = {}) {
   const budget = Number.isFinite(budgetMs) ? Math.max(0, budgetMs) : 110;
-  const deadline = performance.now() + budget;
+  // Rated v1 fields contain at most 22 edges in pure-variant grounded pieces
+  // of at most seven edges. Only that bounded exact path can bypass the clock.
+  if (completeSmallComponents && live.length > 22) throw new RangeError('Rated field is too large.');
+  const deadline = completeSmallComponents ? Infinity : performance.now() + budget;
   if (live.length > MASK_LIMIT) return largeBoardMove(board, live, side, deadline);
   const graph = prepare(board, live);
   const position = inspect(graph, (1n << BigInt(graph.edges.length)) - 1n);
   const { mask } = position;
+  if (completeSmallComponents && ((graph.colors.green && graph.colors.green !== mask)
+      || position.parts.some(part => count(part.mask) > 7))) {
+    throw new RangeError('Rated play requires small pure-variant grounded components.');
+  }
   const options = rankedCuts(graph, mask, [position], side);
   if (!options.length) return result(null, false);
   const idFor = option => graph.edges[option.index].id;

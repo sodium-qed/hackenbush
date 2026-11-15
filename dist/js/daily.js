@@ -70,8 +70,7 @@ function provesSide(board, graph, side) {
   return false;
 }
 
-function redBlueWinner(seed, firstSide) {
-  const board = generateBoard(seed, 'redblue', 'expert', TEXT_BOARD_VERSION);
+function redBlueWinner(board, firstSide) {
   const live = initialEdges(board);
   const value = structuralValue(board, live, firstSide, 'redblue');
   if (value.exact) return value.winner;
@@ -82,7 +81,21 @@ function redBlueWinner(seed, firstSide) {
   return null;
 }
 
-let lastSeed, lastOpening;
+let lastSeed, lastOpening, lastBoard;
+
+// Reuse the daily generator's proof only for the very same mathematical
+// position. This lookup never regenerates or searches a board on the UI thread.
+export function cachedDailyWinner(seed, board, variant, firstSide) {
+  if (!lastBoard || seed !== lastSeed || variant !== lastOpening.variant || firstSide !== lastOpening.firstSide ||
+      board.nodes.length !== lastBoard.nodes.length || board.edges.length !== lastBoard.edges.length) return null;
+  const nodesMatch = board.nodes.every((node, i) => node.id === lastBoard.nodes[i].id &&
+    Boolean(node.ground) === Boolean(lastBoard.nodes[i].ground));
+  const edgesMatch = board.edges.every((edge, i) => {
+    const other = lastBoard.edges[i];
+    return edge.id === other.id && edge.a === other.a && edge.b === other.b && edge.color === other.color;
+  });
+  return nodesMatch && edgesMatch ? lastOpening.humanSide : null;
+}
 
 export function dailyOpening(seed) {
   if (!isDailySeed(seed)) throw new RangeError('Invalid daily challenge seed.');
@@ -90,14 +103,16 @@ export function dailyOpening(seed) {
   const day = Number(seed.slice(9, 11));
   const firstSide = day % 2 ? 'blue' : 'red';
   let variant = 'redblue';
-  let humanSide = day % 5 ? redBlueWinner(seed, firstSide) : null;
+  let board = day % 5 ? generateBoard(seed, variant, 'expert', TEXT_BOARD_VERSION) : null;
+  let humanSide = board ? redBlueWinner(board, firstSide) : null;
   if (!humanSide) {
     variant = 'green';
-    const board = generateBoard(seed, variant, 'expert', TEXT_BOARD_VERSION);
+    board = generateBoard(seed, variant, 'expert', TEXT_BOARD_VERSION);
     const value = structuralValue(board, initialEdges(board), firstSide, variant);
     humanSide = value.nimber ? firstSide : otherSide(firstSide);
   }
   lastSeed = seed;
+  lastBoard = board;
   lastOpening = Object.freeze({ variant, firstSide, humanSide });
   return lastOpening;
 }

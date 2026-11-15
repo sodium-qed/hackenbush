@@ -4,19 +4,20 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f6f2e8">
-  <meta name="description" content="Play the daily Hackenbush puzzle against the computer, grow a Green or Red–Blue garden from a seed, or draw your own board. Explore the value of each cut after a match.">
+  <meta name="description" content="Play rated Hackenbush against calibrated bots, try the daily puzzle, or grow a Green or Red–Blue garden. Explore the value and difficulty of each position after a match.">
   <title>Hackenbush · Groundwork</title>
-  <link rel="icon" href="./favicon.svg?v=8" type="image/svg+xml">
+  <link rel="icon" href="./favicon.svg?v=9" type="image/svg+xml">
   <link rel="preload" href="./fonts/instrument-serif.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="./style.css?v=8">
-  <link rel="stylesheet" href="./board.css?v=8">
-  <link rel="stylesheet" href="./guide.css?v=8">
-  <link rel="stylesheet" href="./players.css?v=8">
-  <link rel="stylesheet" href="./landscape.css?v=8">
-  <link rel="stylesheet" href="./practice.css?v=8">
-  <link rel="stylesheet" href="./audio.css?v=8">
-  <link rel="stylesheet" href="./builder.css?v=8">
-  <link rel="stylesheet" href="./analyzer.css?v=8">
+  <link rel="stylesheet" href="./style.css?v=9">
+  <link rel="stylesheet" href="./board.css?v=9">
+  <link rel="stylesheet" href="./guide.css?v=9">
+  <link rel="stylesheet" href="./players.css?v=9">
+  <link rel="stylesheet" href="./landscape.css?v=9">
+  <link rel="stylesheet" href="./practice.css?v=9">
+  <link rel="stylesheet" href="./audio.css?v=9">
+  <link rel="stylesheet" href="./builder.css?v=9">
+  <link rel="stylesheet" href="./analyzer.css?v=9">
+  <link rel="stylesheet" href="./rated.css?v=9">
 </head>
 <body data-phase="ready">
   <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
@@ -72,6 +73,7 @@
       <nav aria-label="Primary navigation" class="top-nav">
         <a href="#game-table" class="nav-play" aria-current="page"><span class="nav-dot" aria-hidden="true"></span>Play</a>
         <a id="today-puzzle" href="?daily=today#game-table" aria-label="Daily puzzle"><svg class="icon" aria-hidden="true"><use href="#i-calendar"/></svg><span>Daily<span class="nav-puzzle"> puzzle</span></span></a>
+        <button id="rated-nav" type="button" aria-label="Rated play" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg><span>Rated</span></button>
         <button id="guide-nav" type="button" aria-label="How to play" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#i-book"/></svg><span>How to play</span></button>
         <button id="sound-nav" type="button" aria-label="Sound settings" aria-haspopup="dialog"><svg class="icon" aria-hidden="true"><use href="#i-sound"/></svg><span>Sound</span></button>
       </nav>
@@ -121,7 +123,7 @@
             <div class="board-context">
               <span id="board-caption" class="board-caption">Expert garden</span>
               <button type="button" id="resume" class="secondary resume" hidden><svg class="icon" aria-hidden="true"><use href="#i-history"/></svg>Resume match</button>
-              <button class="secondary new-game" type="button" id="new-game" hidden><svg class="icon" aria-hidden="true"><use href="#i-die"/></svg>New game</button>
+              <button class="secondary new-game" type="button" id="new-game" hidden><svg class="icon" aria-hidden="true"><use href="#i-die"/></svg><span>New game</span></button>
             </div>
           </div>
           <div class="ruleset" id="variants" role="group" aria-labelledby="ruleset-label" aria-describedby="color-rule">
@@ -185,6 +187,11 @@
       </div>
 
       <aside class="side-column" aria-label="Practice and match details">
+        <section class="panel rated-card" id="rated-card" aria-labelledby="rated-card-title">
+          <div class="rated-card__heading"><h2 id="rated-card-title">Rated play</h2><svg class="icon" aria-hidden="true"><use href="#i-seed"/></svg></div>
+          <p>Play an untimed match against a calibrated bot. Each ruleset has its own rating.</p>
+          <button id="open-rated" class="secondary" type="button" aria-haspopup="dialog">View ratings &amp; play<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+        </section>
         <section id="practice-garden" class="panel"></section>
         <section class="turn-card" id="turn-card" aria-labelledby="turn-name">
           <div class="turn-top">
@@ -200,6 +207,12 @@
           <button type="button" class="turn-share analyze-game" id="analyze-game" aria-haspopup="dialog" hidden><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg>Analyze game</button>
           <button type="button" class="turn-share" id="share-turn" hidden><svg class="icon" aria-hidden="true"><use href="#i-link"/></svg><span>Share turn link</span></button>
         </section>
+        <section class="panel rated-card rated-receipt" id="rated-receipt" aria-labelledby="rated-receipt-title" hidden>
+          <div class="rated-card__heading"><h2 id="rated-receipt-title">Rated match</h2><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg></div>
+          <p id="rated-match-rating"></p><p id="rated-match-odds"></p><p id="rated-match-difficulty"></p>
+          <button id="match-ratings" class="secondary" type="button" aria-haspopup="dialog">Rating history<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
+          <button id="rated-retry" class="secondary" type="button" hidden>Retry bot move</button>
+        </section>
         <section class="panel setup-panel" aria-labelledby="setup-title">
           <div class="section-top"><h2 id="setup-title">Players</h2><svg class="icon section-icon" aria-hidden="true"><use href="#i-people"/></svg></div>
           <ol id="match-players" class="match-players" aria-label="Players in turn order" hidden></ol>
@@ -211,6 +224,7 @@
   <dialog id="guide-dialog"></dialog>
   <dialog id="builder-dialog"></dialog>
   <dialog id="analyzer-dialog"></dialog>
+  <dialog id="rated-dialog" class="rated-dialog" aria-labelledby="rated-title"></dialog>
   <dialog id="sound-dialog"></dialog>
   <dialog id="share-dialog" class="form-dialog" aria-labelledby="share-title" aria-describedby="share-description">
     <div class="dialog-inner"><div class="dialog-heading"><h2 id="share-title">Share this turn</h2><button class="icon-button" data-close type="button" aria-label="Close share dialog"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button></div>
@@ -223,44 +237,56 @@
   <script type="importmap">
     {
       "imports": {
-        "./js/analysis-values.js": "./js/analysis-values.js?v=8",
-        "./js/analysis-worker.js": "./js/analysis-worker.js?v=8",
-        "./js/analyzer.js": "./js/analyzer.js?v=8",
-        "./js/audio.js": "./js/audio.js?v=8",
-        "./js/board.js": "./js/board.js?v=8",
-        "./js/builder.js": "./js/builder.js?v=8",
-        "./js/custom-board.js": "./js/custom-board.js?v=8",
-        "./js/daily-progress.js": "./js/daily-progress.js?v=8",
-        "./js/daily.js": "./js/daily.js?v=8",
-        "./js/draw.js": "./js/draw.js?v=8",
-        "./js/garden-layouts.js": "./js/garden-layouts.js?v=8",
-        "./js/generator.js": "./js/generator.js?v=8",
-        "./js/guide-lessons.js": "./js/guide-lessons.js?v=8",
-        "./js/guide.js": "./js/guide.js?v=8",
-        "./js/landscape.js": "./js/landscape.js?v=8",
-        "./js/linkplay.js": "./js/linkplay.js?v=8",
-        "./js/map-catalog.js": "./js/map-catalog.js?v=8",
-        "./js/map-seed.js": "./js/map-seed.js?v=8",
-        "./js/maps/habitats.js": "./js/maps/habitats.js?v=8",
-        "./js/maps/structures.js": "./js/maps/structures.js?v=8",
-        "./js/maps/water.js": "./js/maps/water.js?v=8",
-        "./js/maps/woodland.js": "./js/maps/woodland.js?v=8",
-        "./js/opponents.js": "./js/opponents.js?v=8",
-        "./js/players.js": "./js/players.js?v=8",
-        "./js/practice.js": "./js/practice.js?v=8",
-        "./js/preview.js": "./js/preview.js?v=8",
-        "./js/region-art.js": "./js/region-art.js?v=8",
-        "./js/regions.js": "./js/regions.js?v=8",
-        "./js/rules.js": "./js/rules.js?v=8",
-        "./js/scenery.js": "./js/scenery.js?v=8",
-        "./js/session.js": "./js/session.js?v=8",
-        "./js/strategy.js": "./js/strategy.js?v=8",
-        "./js/world-generator.js": "./js/world-generator.js?v=8",
-        "./js/world-growth.js": "./js/world-growth.js?v=8",
-        "./js/world-weave.js": "./js/world-weave.js?v=8"
+        "./js/analysis-dyadics.js": "./js/analysis-dyadics.js?v=9",
+        "./js/analysis-modes.js": "./js/analysis-modes.js?v=9",
+        "./js/analysis-reductions.js": "./js/analysis-reductions.js?v=9",
+        "./js/analysis-symmetry.js": "./js/analysis-symmetry.js?v=9",
+        "./js/analysis-values.js": "./js/analysis-values.js?v=9",
+        "./js/analysis-worker.js": "./js/analysis-worker.js?v=9",
+        "./js/analyzer.js": "./js/analyzer.js?v=9",
+        "./js/audio.js": "./js/audio.js?v=9",
+        "./js/board.js": "./js/board.js?v=9",
+        "./js/bot-calibration.js": "./js/bot-calibration.js?v=9",
+        "./js/builder.js": "./js/builder.js?v=9",
+        "./js/custom-board.js": "./js/custom-board.js?v=9",
+        "./js/daily-progress.js": "./js/daily-progress.js?v=9",
+        "./js/daily.js": "./js/daily.js?v=9",
+        "./js/difficulty.js": "./js/difficulty.js?v=9",
+        "./js/draw.js": "./js/draw.js?v=9",
+        "./js/garden-layouts.js": "./js/garden-layouts.js?v=9",
+        "./js/generator.js": "./js/generator.js?v=9",
+        "./js/guide-lessons.js": "./js/guide-lessons.js?v=9",
+        "./js/guide.js": "./js/guide.js?v=9",
+        "./js/landscape.js": "./js/landscape.js?v=9",
+        "./js/linkplay.js": "./js/linkplay.js?v=9",
+        "./js/map-catalog.js": "./js/map-catalog.js?v=9",
+        "./js/map-seed.js": "./js/map-seed.js?v=9",
+        "./js/maps/habitats.js": "./js/maps/habitats.js?v=9",
+        "./js/maps/structures.js": "./js/maps/structures.js?v=9",
+        "./js/maps/water.js": "./js/maps/water.js?v=9",
+        "./js/maps/woodland.js": "./js/maps/woodland.js?v=9",
+        "./js/opponents.js": "./js/opponents.js?v=9",
+        "./js/players.js": "./js/players.js?v=9",
+        "./js/practice.js": "./js/practice.js?v=9",
+        "./js/preview.js": "./js/preview.js?v=9",
+        "./js/rated-deal.js": "./js/rated-deal.js?v=9",
+        "./js/rated-ui.js": "./js/rated-ui.js?v=9",
+        "./js/rated-worker.js": "./js/rated-worker.js?v=9",
+        "./js/rating-model.js": "./js/rating-model.js?v=9",
+        "./js/rating-opening.js": "./js/rating-opening.js?v=9",
+        "./js/rating.js": "./js/rating.js?v=9",
+        "./js/region-art.js": "./js/region-art.js?v=9",
+        "./js/regions.js": "./js/regions.js?v=9",
+        "./js/rules.js": "./js/rules.js?v=9",
+        "./js/scenery.js": "./js/scenery.js?v=9",
+        "./js/session.js": "./js/session.js?v=9",
+        "./js/strategy.js": "./js/strategy.js?v=9",
+        "./js/world-generator.js": "./js/world-generator.js?v=9",
+        "./js/world-growth.js": "./js/world-growth.js?v=9",
+        "./js/world-weave.js": "./js/world-weave.js?v=9"
       }
     }
   </script>
-  <script type="module" src="./js/app.js?v=8"></script>
+  <script type="module" src="./js/app.js?v=9"></script>
 </body>
 </html>
