@@ -62,9 +62,13 @@ const sheet = `
     </details>
     <details class="hb-guide-setup">
       <summary>Replaying a map seed</summary>
-      <p>Open <strong>Map seed</strong> during setup. Enter six digits using 0–9 or A–F, or leave it blank for a random garden.
-        The whole code determines the terrain, plants and paths that connect them to the ground.</p>
+      <p>Open <strong>Map seed</strong> during setup. Type a word, a phrase or a six-digit map code. A blank field draws a random six-digit code using 0–9 and A–F. The whole seed determines the garden.</p>
       <p>Share the seed beneath the board to give someone the same map. <strong>Rematch</strong> keeps the layout and draws fresh seats.</p>
+    </details>
+    <details class="hb-guide-setup">
+      <summary>Playing the Daily Challenge</summary>
+      <p>Select <strong>Daily puzzle</strong>, choose a computer difficulty, then play. The date generates a new garden at local midnight. Everyone who plays that date gets the same board and starting seats.</p>
+      <p>Your seat can force a win with perfect play. Some days the computer opens. Beat it within the usual ten-second turns to solve the puzzle on that difficulty. You can retry or share the dated puzzle after the match.</p>
     </details>
     <details class="hb-guide-setup">
       <summary>Playing with turn links</summary>

@@ -2,7 +2,7 @@
 
 **[Play Hackenbush in your browser](https://sodium-qed.github.io/hackenbush/)**
 
-Play **Green Hackenbush** or **Red–Blue Hackenbush** on any of **16,777,216** seeded Expert maps or draw your own board. Each player has 10 seconds per turn to cut one eligible branch.
+Play **Green Hackenbush** or **Red–Blue Hackenbush** on a generated garden, draw your own board, or take on the daily puzzle. Each player has 10 seconds per turn to cut one eligible branch.
 
 ![A Hackenbush match in the browser](media/hackenbush-table.jpg)
 
@@ -17,13 +17,19 @@ Play **Green Hackenbush** or **Red–Blue Hackenbush** on any of **16,777,216** 
 
 Click or tap a branch. On a keyboard, tab to the board, use the arrow keys to select a branch, and press Enter or Space to cut it. A player who starts a turn with no eligible branch loses, even if other branches are standing. If the clock reaches zero, the active player loses even with a legal cut available. The clock keeps running in a background tab and while **How to play** is open.
 
+## Play the Daily Challenge
+
+Choose Easy, Standard or Expert, then select **Play challenge**. The garden grows from the local calendar date in the form `DAILY-MM-DD-YYYY`. Everyone who plays that date gets the same board and seats at every difficulty. Your starting seat has a forced win with perfect play. On some dates that means the computer opens.
+
+Beat the computer to record a solve on this device at the selected difficulty. **Replay challenge** starts a fresh attempt on the same board. **Share puzzle** gives a friend that exact date to play, even after midnight. [Play today’s challenge](https://sodium-qed.github.io/hackenbush/?daily=today).
+
 ## Play a map by seed
 
 A six-character code selects one of **16,777,216** Expert landscapes. The generator mixes all six digits before it grows the board. Changing one digit can replace a sheltered canopy with an open wetland, move the roots, and change which branches share a second path to the ground.
 
 For comparison, [A35D7E](https://sodium-qed.github.io/hackenbush/?seed=A35D7E&v=5) opens a wildflower meadow and [A35D7F](https://sodium-qed.github.io/hackenbush/?seed=A35D7F&v=5) opens an alpine pass. Both the ground attachments and the network above them change.
 
-Open **Map seed** before drawing seats, or leave it blank to draw a map. The random deal visits each code once per cycle on the same browser. **Rematch** draws fresh seats on the same board. Use **Seed** under a revealed board to share its layout. Turn links also carry the generator version and the moves already played. Toggle **Scenery** beneath the board to switch between the illustrated landscape and plain paper.
+Open **Map seed** before drawing seats. Leave it blank for a random six-digit hexadecimal code, or enter a word or phrase of up to 64 characters to generate a garden from the whole text. Words are case-sensitive. The substring `DAILY` in any letter case is reserved for the daily puzzle. The random deal visits each six-digit code once per cycle on the same browser. **Rematch** draws fresh seats on the same board. Use **Seed** under a revealed board to share its layout. Turn links also carry the generator version and the moves already played. Toggle **Scenery** beneath the board to switch between the illustrated landscape and plain paper.
 
 ## Build a board
 
