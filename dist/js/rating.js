@@ -36,12 +36,12 @@ function emptyLedger(status = 'ok') {
     pools: { green: newPool(), redblue: newPool() }, active: null, history: [] };
 }
 
-function validMoment(value) {
-  return value && inRange(value.rating, -100000, 100000) && Number.isFinite(value.rd) && value.rd > 0 && value.rd <= 1000;
+function validMoment(value, shift = LEGACY_RATING_SHIFT) {
+  return value && inRange(value.rating, -100000 + shift, 100000 + shift) && Number.isFinite(value.rd) && value.rd > 0 && value.rd <= 1000;
 }
 
-function validPool(pool) {
-  return validMoment(pool) && safeCount(pool.games) && safeCount(pool.ratedGames) &&
+function validPool(pool, shift) {
+  return validMoment(pool, shift) && safeCount(pool.games) && safeCount(pool.ratedGames) &&
     pool.ratedGames <= pool.games && safeCount(pool.wins) && safeCount(pool.losses) &&
     pool.wins + pool.losses === pool.games && pool.provisional === isProvisional(pool.ratedGames, pool.rd);
 }
@@ -84,18 +84,18 @@ function validAssignment(a, inspectSession) {
   return session;
 }
 
-function validRecord(r, inspectSession) {
+function validRecord(r, inspectSession, shift) {
   const session = validAssignment(r, inspectSession);
   return session && validDate(r.startedAt) && validDate(r.endedAt) && typeof r.won === 'boolean' &&
     typeof r.rated === 'boolean' && r.rated === (r.opening.information === 'skill') &&
     (r.won ? r.reason === 'win' : ['loss', 'forfeit'].includes(r.reason)) &&
     session.victor === (r.reason === 'forfeit' ? null : r.won ? r.seat : otherSide(r.seat)) &&
-    validMoment({ rating: r.before, rd: r.rdBefore }) && validMoment({ rating: r.after, rd: r.rdAfter }) &&
+    validMoment({ rating: r.before, rd: r.rdBefore }, shift) && validMoment({ rating: r.after, rd: r.rdAfter }, shift) &&
     Number.isFinite(r.delta) && typeof r.model === 'string';
 }
 
-function validActive(a, inspectSession) {
-  return validAssignment(a, inspectSession) && validDate(a.startedAt) && validMoment(a.forecast?.win) && validMoment(a.forecast?.loss) &&
+function validActive(a, inspectSession, shift) {
+  return validAssignment(a, inspectSession) && validDate(a.startedAt) && validMoment(a.forecast?.win, shift) && validMoment(a.forecast?.loss, shift) &&
     a.forecast.expected === a.expected && a.forecast.rated === (a.opening.information === 'skill') &&
     (a.forecast.deltas === undefined || (Number.isFinite(a.forecast.deltas?.win) && Number.isFinite(a.forecast.deltas?.loss))) &&
     typeof a.forecast.model === 'string' && typeof a.forecast.calibration === 'string';
@@ -119,10 +119,11 @@ function decode(raw, inspectSession) {
     for (const v of variants) delete data.pools[v].history;
     data.version = 2;
   }
+  const shift = data?.version === 2 ? 0 : LEGACY_RATING_SHIFT;
   if (![2, FORMAT].includes(data?.version) || !validId(data.epoch) || !safeCount(data.issued) || data.issued > MAP_COUNT ||
-      !variants.every(v => validPool(data.pools?.[v])) || !Array.isArray(data.history) ||
-      data.history.length > HISTORY_PER_VARIANT * variants.length || !data.history.every(r => validRecord(r, inspectSession)) ||
-      !(data.active === null || validActive(data.active, inspectSession))) return emptyLedger('invalid');
+      !variants.every(v => validPool(data.pools?.[v], shift)) || !Array.isArray(data.history) ||
+      data.history.length > HISTORY_PER_VARIANT * variants.length || !data.history.every(r => validRecord(r, inspectSession, shift)) ||
+      !(data.active === null || validActive(data.active, inspectSession, shift))) return emptyLedger('invalid');
   const stream = data.stream;
   if (data.issued === 0 ? stream !== null : !stream || !safeCount(stream.current) || stream.current >= MAP_COUNT ||
       !safeCount(stream.step) || stream.step >= MAP_COUNT || !(stream.step & 1)) return emptyLedger('invalid');
@@ -142,7 +143,7 @@ function decode(raw, inspectSession) {
     if (data.active) {
       const { forecast } = data.active;
       const oldRating = data.pools[data.active.variant].rating;
-      // Preserve the original subtraction, even across floating-point binades.
+      // Adding 200 can round the last bit. Keep the originally priced changes.
       forecast.deltas = { win: forecast.win.rating - oldRating, loss: forecast.loss.rating - oldRating };
       forecast.win.rating += LEGACY_RATING_SHIFT;
       forecast.loss.rating += LEGACY_RATING_SHIFT;
