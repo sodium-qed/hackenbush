@@ -20,7 +20,7 @@ test('a rated map and an ordinary map share every edge, color, landmark and grou
     assert.equal(deal.seed, seed);
     assert.equal(deal.boardVersion, 5);
     assert.equal(deal.difficulty, 'expert');
-    assert.equal(deal.timed, false);
+    assert.equal(deal.timed, true);
     assignments.add([deal.firstSide, deal.seat].join('/'));
     for (const variant of ['green', 'redblue']) {
       const rated = createGame({ ...deal, variant, opponent: 'computer', players: playersFor(deal.seat, 'nelson', 'Nelson') });
@@ -44,7 +44,7 @@ test('untimed full-map replays retain the named bot, assigned turn, large edge I
   // The human opens on Red, and both variants have playable three-digit branch IDs.
   const deal = ratedDeal('000000');
   for (const variant of ['green', 'redblue']) {
-    const config = { ...deal, variant, opponent: 'computer', players: playersFor(deal.seat, 'martin', 'Martin') };
+    const config = { ...deal, timed: false, variant, opponent: 'computer', players: playersFor(deal.seat, 'martin', 'Martin') };
     const opening = createGame(config);
     assert.ok(opening.matchId);
     const gameId = 'rated-' + 'a'.repeat(32);
@@ -73,13 +73,13 @@ test('the untimed map exception requires one named bot and the human on this dev
   const deal = ratedDeal('000001');
   assert.notEqual(deal.firstSide, deal.seat);
   for (const { id, name } of RATED_BOTS) {
-    const config = { ...deal, opponent: 'computer', players: playersFor(deal.seat, id, name) };
+    const config = { ...deal, timed: false, opponent: 'computer', players: playersFor(deal.seat, id, name) };
     const game = createGame(config);
     assert.deepEqual(restoreGame(saveData(game)), game);
     assert.equal(matchKey(game), matchKey(saveData(game)));
   }
   const players = playersFor(deal.seat, 'martin', 'Martin');
-  const config = { ...deal, opponent: 'computer', players };
+  const config = { ...deal, timed: false, opponent: 'computer', players };
   for (const changes of [
     { opponent: 'local' }, { opponent: 'link' }, { seat: otherSide(deal.seat) },
     { players: playersFor(deal.seat, 'expert', 'Expert') },

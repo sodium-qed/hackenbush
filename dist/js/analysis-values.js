@@ -1,4 +1,4 @@
-import { inspectGraph, prepareGraph } from './strategy.js?v=10';
+import { inspectGraph, prepareGraph } from './strategy.js?v=11';
 import { otherSide } from './rules.js';
 import { fixed, fraction, intersect, numberOption, onlyLatticePoint, simplest, sumOf, supported } from './analysis-dyadics.js';
 import { oppositeGraphs } from './analysis-symmetry.js';

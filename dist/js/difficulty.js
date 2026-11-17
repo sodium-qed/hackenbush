@@ -1,6 +1,6 @@
-import { analyzePosition, dyadicChange } from './analysis-values.js?v=10';
+import { analyzePosition, dyadicChange } from './analysis-values.js?v=11';
 import { legalMoves, otherSide } from './rules.js';
-import { inspectGraph, prepareGraph } from './strategy.js?v=10';
+import { inspectGraph, prepareGraph } from './strategy.js?v=11';
 
 const MODEL = 'Cut Discrimination Index v1';
 // The same mask scale as the existing bot. Oversized imported graphs still

@@ -1,7 +1,7 @@
 import { MAP_COUNT, normalizeMapSeed, permuteMapNumber } from './map-seed.js';
 import { otherSide } from './rules.js';
-import { inspectGraph, prepareGraph } from './strategy.js?v=10';
-import { analyzePosition } from './analysis-values.js?v=10';
+import { inspectGraph, prepareGraph } from './strategy.js?v=11';
+import { analyzePosition } from './analysis-values.js?v=11';
 
 // Chess.com publishes the names and ratings. The move policies here play
 // Hackenbush, and each game's seeded choices can be reproduced in a worker.

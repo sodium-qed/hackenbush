@@ -2,7 +2,7 @@ import { MAP_COUNT, nextMapSeed } from './map-seed.js';
 import { COMPUTER_LEVELS, computerLevelLabel } from './opponents.js';
 import { RATED_BOT_BY_ID } from './rated-bots.js';
 import { isRatedBot, RATED_BOARD_VERSION, ratedBotMove, ratedDeal } from './rated-deal.js';
-import { createGame, playCut, restoreGame, saveData } from './session.js';
+import { createGame, expireTurn, playCut, restoreGame, saveData, startTurnClock, TURN_MS } from './session.js';
 import { initialEdges, legalMoves, otherSide } from './rules.js';
 import { forecastOpening, isProvisional, LEGACY_RATING_SHIFT, newPool, ratedBotSummary } from './rating-model.js';
 import { prepareRatedOpening } from './rating-opening.js';
@@ -10,7 +10,9 @@ import { prepareRatedOpening } from './rating-opening.js';
 export { prepareRatedOpening, ratedBotSummary };
 export const RATING_KEY = 'groundwork.hackenbush.ratings';
 export const HISTORY_PER_VARIANT = 40;
-const FORMAT = 3;
+export const RATED_OPENING_MS = 2000;
+const BOT_DELAY_MS = 700;
+const FORMAT = 4;
 const variants = ['green', 'redblue'];
 const sides = ['blue', 'red'];
 const sameRealmWrites = new WeakMap();
@@ -23,11 +25,11 @@ function validPolicy(version, level) {
   return version === 1 ? typeof level === 'string' && Object.hasOwn(COMPUTER_LEVELS, level) : version === RATED_BOARD_VERSION && isRatedBot(level);
 }
 
-export function createRatedGame(variant, level, seed, id, boardVersion = RATED_BOARD_VERSION) {
+export function createRatedGame(variant, level, seed, id, boardVersion = RATED_BOARD_VERSION, timed = boardVersion === RATED_BOARD_VERSION) {
   if (!variants.includes(variant) || !validPolicy(boardVersion, level)) throw new RangeError('Invalid rated configuration.');
   const deal = ratedDeal(seed, boardVersion), opponent = otherSide(deal.seat);
   const name = boardVersion === 1 ? computerLevelLabel(level) : RATED_BOT_BY_ID[level].name;
-  return createGame({ ...deal, variant, matchId: id, opponent: 'computer', timed: false,
+  return createGame({ ...deal, variant, matchId: id, opponent: 'computer', timed,
     players: { [deal.seat]: { kind: 'human', name: 'You' }, [opponent]: { kind: 'computer', name, level } } });
 }
 
@@ -63,15 +65,15 @@ function validBot(bot, level) {
 }
 
 function sameAssignment(a, game) {
-  return a && game && game.matchId === a.id && game.opponent === 'computer' && game.timed === false &&
-    game.timedOut === null && game.deadline === null && game.seed === a.seed && game.variant === a.variant &&
+  return a && game && game.matchId === a.id && game.opponent === 'computer' && game.timed === a.timed &&
+    game.seed === a.seed && game.variant === a.variant &&
     game.seat === a.seat && game.firstSide === a.firstSide && game.boardVersion === a.boardVersion &&
     game.difficulty === a.difficulty && game.players?.[a.seat]?.kind === 'human' &&
     game.players?.[otherSide(a.seat)]?.kind === 'computer' && game.players[otherSide(a.seat)].level === a.level;
 }
 
 function validAssignment(a, inspectSession) {
-  if (!a || !validId(a.id) || !variants.includes(a.variant) || !validPolicy(a.boardVersion, a.level) || a.timed !== false ||
+  if (!a || !validId(a.id) || !variants.includes(a.variant) || !validPolicy(a.boardVersion, a.level) || typeof a.timed !== 'boolean' ||
       typeof a.seed !== 'string' || !/^[0-9A-F]{6}$/.test(a.seed) || !sides.includes(a.seat) || !sides.includes(a.firstSide) ||
       !validOpening(a.opening, a) || !validBot(a.bot, a.level) || !inRange(a.expected, 0, 1) ||
       !sameAssignment(a, a.game) || !Array.isArray(a.game.moves) || a.game.moves.length > a.opening.edges ||
@@ -88,14 +90,18 @@ function validRecord(r, inspectSession, shift) {
   const session = validAssignment(r, inspectSession);
   return session && validDate(r.startedAt) && validDate(r.endedAt) && typeof r.won === 'boolean' &&
     typeof r.rated === 'boolean' && r.rated === (r.opening.information === 'skill') &&
-    (r.won ? r.reason === 'win' : ['loss', 'forfeit'].includes(r.reason)) &&
+    r.game.deadline === null && (r.reason === 'timeout' ? sides.includes(r.game.timedOut) :
+      r.game.timedOut === null && (r.won ? r.reason === 'win' : ['loss', 'forfeit'].includes(r.reason))) &&
     session.victor === (r.reason === 'forfeit' ? null : r.won ? r.seat : otherSide(r.seat)) &&
     validMoment({ rating: r.before, rd: r.rdBefore }, shift) && validMoment({ rating: r.after, rd: r.rdAfter }, shift) &&
     Number.isFinite(r.delta) && typeof r.model === 'string';
 }
 
 function validActive(a, inspectSession, shift) {
-  return validAssignment(a, inspectSession) && validDate(a.startedAt) && validMoment(a.forecast?.win, shift) && validMoment(a.forecast?.loss, shift) &&
+  const session = validAssignment(a, inspectSession);
+  return session && !session.victor && a.game.timedOut === null &&
+    (a.timed ? validDate(a.game.deadline) && a.game.deadline >= TURN_MS : a.game.deadline === null) &&
+    validDate(a.startedAt) && validMoment(a.forecast?.win, shift) && validMoment(a.forecast?.loss, shift) &&
     a.forecast.expected === a.expected && a.forecast.rated === (a.opening.information === 'skill') &&
     (a.forecast.deltas === undefined || (Number.isFinite(a.forecast.deltas?.win) && Number.isFinite(a.forecast.deltas?.loss))) &&
     typeof a.forecast.model === 'string' && typeof a.forecast.calibration === 'string';
@@ -120,7 +126,7 @@ function decode(raw, inspectSession) {
     data.version = 2;
   }
   const shift = data?.version === 2 ? 0 : LEGACY_RATING_SHIFT;
-  if (![2, FORMAT].includes(data?.version) || !validId(data.epoch) || !safeCount(data.issued) || data.issued > MAP_COUNT ||
+  if (![2, 3, FORMAT].includes(data?.version) || !validId(data.epoch) || !safeCount(data.issued) || data.issued > MAP_COUNT ||
       !variants.every(v => validPool(data.pools?.[v], shift)) || !Array.isArray(data.history) ||
       data.history.length > HISTORY_PER_VARIANT * variants.length || !data.history.every(r => validRecord(r, inspectSession, shift)) ||
       !(data.active === null || validActive(data.active, inspectSession, shift))) return emptyLedger('invalid');
@@ -150,8 +156,8 @@ function decode(raw, inspectSession) {
       if (Number.isFinite(forecast.offset)) forecast.offset -= LEGACY_RATING_SHIFT;
     }
     for (const v of variants) data.pools[v].rating += LEGACY_RATING_SHIFT;
-    data.version = FORMAT;
   }
+  data.version = FORMAT;
   return { ...data, status: 'ok' };
 }
 
@@ -189,6 +195,19 @@ function randomId(entropy) {
 function failed(reason, state) { return { ok: false, reason, state }; }
 function success(state, extra = {}) { return { ok: true, state, active: state.active, ...extra }; }
 
+/** The next event can be recovered from the saved position even if every tab closed. */
+export function ratedClockEvent(active) {
+  if (!active?.timed || active.game.deadline === null) return null;
+  const side = active.game.moves.length % 2 ? otherSide(active.firstSide) : active.firstSide;
+  return side === active.seat ? active.game.deadline : active.game.deadline - TURN_MS + BOT_DELAY_MS;
+}
+
+function localBotDecision(game) {
+  const start = performance.now();
+  const { edgeId } = ratedBotMove(game.board, game.live, game.side, game.players[game.side].level, game.seed, game.moves.length);
+  return { edgeId, elapsedMs: performance.now() - start };
+}
+
 /** The single pending assignment, deck cursor, ratings and receipts share one
  * atomic storage value. Board preparation is outside every write lock. */
 export function createRatingStore(options = {}) {
@@ -198,6 +217,7 @@ export function createRatingStore(options = {}) {
   const entropy = options.entropy ?? browserValue('crypto');
   const clock = options.clock ?? Date.now;
   const prepare = options.prepareOpening ?? prepareRatedOpening;
+  const chooseBot = options.chooseBot ?? localBotDecision;
 
   // Validating an old receipt means replaying its legal moves on the original
   // board. Keep only the small validation result, keyed by the exact snapshot,
@@ -208,7 +228,9 @@ export function createRatingStore(options = {}) {
     let info = checkedSessions.get(key);
     if (info) checkedSessions.delete(key);
     else {
-      const game = restoreGame(saved);
+      // Validate the recorded position independently of when it is being read.
+      // Only a locked clock transaction can turn a deadline into a rating result.
+      const game = restoreGame(saved, 0);
       if (!game) return null;
       info = { edges: game.board.edges.length, legalMoves: legalMoves(game.board, initialEdges(game.board), game.firstSide).length,
         family: game.board.family, victor: game.victor };
@@ -246,11 +268,11 @@ export function createRatingStore(options = {}) {
     return success(state, extra);
   }
 
-  async function start(variant, level) {
+  async function start(variant, level, { signal } = {}) {
     const before = read();
     if (before.status !== 'ok') return failed(before.status, before);
     if (!variants.includes(variant) || (!isRatedBot(level) && !(before.active && level === before.active.level))) return failed('ineligible', before);
-    if (before.active) return success(before);
+    if (before.active) return resume(before.active.id);
     if (before.issued >= MAP_COUNT) return failed('exhausted', before);
     if (!entropy?.getRandomValues) return failed('unavailable', before);
     let draw, game, opening, forecast, bot;
@@ -267,14 +289,17 @@ export function createRatingStore(options = {}) {
     return locked(() => {
       const state = read();
       if (state.status !== 'ok') return failed(state.status, state);
+      if (signal?.aborted) return failed('cancelled', state);
       if (state.active) return success(state);
       if (state.epoch !== before.epoch || state.issued !== before.issued) return failed('stale', state);
       if (!state.epoch) state.epoch = randomId(entropy);
       state.issued++;
       state.stream = draw.state;
+      const startedAt = clock();
+      game = startTurnClock(game, startedAt + RATED_OPENING_MS);
       state.active = { id: game.matchId, seed: game.seed, variant, level, seat: game.seat, firstSide: game.firstSide,
-        boardVersion: game.boardVersion, difficulty: game.difficulty, family: game.board.family, timed: false, game: saveData(game),
-        startedAt: clock(), bot, opening, forecast, expected: forecast.expected };
+        boardVersion: game.boardVersion, difficulty: game.difficulty, family: game.board.family, timed: game.timed, game: saveData(game),
+        startedAt, bot, opening, forecast, expected: forecast.expected };
       return write(state);
     });
   }
@@ -285,14 +310,14 @@ export function createRatingStore(options = {}) {
     return Boolean(sameAssignment(active, game) || history.some(r => r.id === game.matchId && sameAssignment(r, game)));
   }
 
-  function settle(state, game, reason) {
+  function settle(state, game, reason, endedAt = clock()) {
     const active = state.active, pool = state.pools[active.variant];
-    const won = reason === 'win';
+    const won = game.victor === active.seat;
     const { rated, model, calibration } = active.forecast;
     const outcome = won ? 'win' : 'loss';
     const next = active.forecast[outcome];
     const { forecast, ...assignment } = active;
-    const record = { ...assignment, game: saveData(game), endedAt: clock(), reason, won, rated, model, calibration,
+    const record = { ...assignment, game: saveData({ ...game, deadline: null }), endedAt, reason, won, rated, model, calibration,
       nuisanceSd: forecast.nuisanceSd, transferSd: forecast.transferSd,
       before: pool.rating, after: next.rating, delta: forecast.deltas?.[outcome] ?? next.rating - pool.rating,
       rdBefore: pool.rd, rdAfter: next.rd };
@@ -304,7 +329,72 @@ export function createRatingStore(options = {}) {
     return write(state, { record });
   }
 
+  function assignmentResult(state, id) {
+    if (state.status !== 'ok') return failed(state.status, state);
+    if (state.active?.id === id) return success(state);
+    const record = state.history.find(row => row.id === id);
+    return record ? success(state, { record }) : failed('ineligible', state);
+  }
+
+  function saveCut(state, game, cutAt, observedAt) {
+    if (game.victor) return settle(state, game, game.victor === state.active.seat ? 'win' : 'loss', cutAt);
+    const armed = startTurnClock(game, cutAt);
+    if (armed.timed && armed.side === armed.seat && observedAt >= armed.deadline) {
+      return settle(state, expireTurn(armed, observedAt), 'timeout', armed.deadline);
+    }
+    state.active.game = saveData(armed);
+    return write(state);
+  }
+
+  async function resume(id) {
+    const found = assignmentResult(read(), id);
+    if (!found.ok || found.record) return found;
+    if (found.active.timed) return refreshClock(id);
+    // Existing untimed assignments retain their original map, moves and price.
+    // Their first clock begins only when the player actually returns to the board.
+    return locked(() => {
+      const latest = assignmentResult(read(), id);
+      if (!latest.ok || latest.record || latest.active.timed) return latest;
+      const active = latest.active;
+      const game = restoreGame({ ...active.game, timed: true }, 0);
+      if (!game) return failed('invalid', latest.state);
+      active.timed = true;
+      active.game = saveData(startTurnClock(game, clock() + (game.moves.length ? 0 : RATED_OPENING_MS)));
+      return write(latest.state);
+    });
+  }
+
+  async function refreshClock(id) {
+    const found = assignmentResult(read(), id);
+    if (!found.ok || found.record) return found;
+    const active = found.active;
+    const due = ratedClockEvent(active);
+    if (due === null || clock() < due) return found;
+    const game = restoreGame(active.game, 0);
+    const botTurn = game.side !== game.seat;
+    let decision;
+    if (botTurn) {
+      // Reconstruct the deterministic reply when a tab was asleep. Charge the
+      // bot for its search, without making browser timer throttling a free win.
+      try { decision = await chooseBot(game, game.deadline - due); } catch { return failed('bot-failed', found.state); }
+      if (!Number.isFinite(decision?.elapsedMs) || decision.elapsedMs < 0) return failed('bot-failed', found.state);
+    }
+    return locked(() => {
+      const latest = assignmentResult(read(), id);
+      if (!latest.ok || latest.record) return latest;
+      const current = latest.active.game;
+      if (current.moves.length !== game.moves.length || current.deadline !== game.deadline) return latest;
+      if (!botTurn) return settle(latest.state, expireTurn(game, due), 'timeout', due);
+      const cutAt = due + Math.ceil(decision.elapsedMs);
+      if (cutAt >= game.deadline) return settle(latest.state, expireTurn(game, game.deadline), 'timeout', game.deadline);
+      const next = playCut(game, decision.edgeId, cutAt);
+      if (!next) return failed('bot-failed', latest.state);
+      return saveCut(latest.state, next, cutAt, clock());
+    });
+  }
+
   function advance(candidate, finish) {
+    const receivedAt = clock();
     return locked(() => {
       const state = read();
       if (state.status !== 'ok') return failed(state.status, state);
@@ -316,25 +406,29 @@ export function createRatingStore(options = {}) {
       const before = active.game.moves, moves = candidate.moves;
       if (!Array.isArray(moves) || moves.length < before.length || moves.length > before.length + 1 ||
           !before.every((id, i) => moves[i] === id)) return failed('stale', state);
-      let game = restoreGame(active.game);
+      let game = restoreGame(active.game, 0);
       if (!game) return failed('invalid', state);
+      if (game.timed && receivedAt >= game.deadline) {
+        if (game.side === game.seat) return settle(state, expireTurn(game, receivedAt), 'timeout', game.deadline);
+        return failed('stale', state);
+      }
       if (moves.length === before.length + 1) {
         const id = moves.at(-1);
         if (game.side !== game.seat && ratedBotMove(game.board, game.live, game.side, active.level,
           game.seed, before.length).edgeId !== id) return failed('ineligible', state);
-        game = playCut(game, id);
+        game = playCut(game, id, receivedAt);
         if (!game) return failed('ineligible', state);
       }
       if (game.victor !== candidate.victor) return failed('ineligible', state);
       if (finish && !game.victor) return failed('unfinished', state);
-      if (game.victor) return settle(state, game, game.victor === game.seat ? 'win' : 'loss');
       if (before.length === moves.length) return success(state);
-      active.game = saveData(game);
-      return write(state);
+      return saveCut(state, game, receivedAt, clock());
     });
   }
 
-  function forfeit(id) {
+  async function forfeit(id) {
+    const result = await refreshClock(id);
+    if (!result.ok || result.record) return result;
     return locked(() => {
       const state = read();
       if (state.status !== 'ok') return failed(state.status, state);
@@ -342,8 +436,11 @@ export function createRatingStore(options = {}) {
         const record = state.history.find(r => r.id === id);
         return record ? success(state, { record }) : failed('ineligible', state);
       }
-      const game = restoreGame(state.active.game);
+      const game = restoreGame(state.active.game, 0);
       if (!game) return failed('invalid', state);
+      if (game.timed && game.side === game.seat && clock() >= game.deadline) {
+        return settle(state, expireTurn(game, game.deadline), 'timeout', game.deadline);
+      }
       return settle(state, game, game.victor ? (game.victor === game.seat ? 'win' : 'loss') : 'forfeit');
     });
   }
@@ -359,5 +456,6 @@ export function createRatingStore(options = {}) {
     });
   }
 
-  return { read, start, matches, checkpoint: game => advance(game, false), finish: game => advance(game, true), forfeit, reset };
+  return { read, start, resume, refreshClock, matches, checkpoint: game => advance(game, false), finish: game => advance(game, true),
+    forfeit, reset };
 }
