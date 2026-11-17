@@ -20,7 +20,7 @@ import { TURN_MS, canUndo, createGame, expireTurn, isHumanTurn, matchKey, playCu
 import { COMPUTER_LEVELS, chooseComputerMove, computerLevelLabel, normalizeComputerLevel } from './opponents.js';
 import { RATED_BOT_BY_ID } from './rated-bots.js';
 import { RATED_BOARD_VERSION, ratedBotMove } from './rated-deal.js';
-import { createRatedGame, createRatingStore, RATING_KEY } from './rating.js';
+import { createRatedGame, createRatingStore, ratedClockEvent, RATING_KEY } from './rating.js';
 import { createRatedDesk, difficultyRange, openingSummary, ratedOpponentLabel, signedRating } from './rated-ui.js';
 
 const $ = id => document.getElementById(id);
@@ -39,7 +39,8 @@ const audio = createAudio({ button: $('sound-nav'), dialog: $('sound-dialog') })
 const practiceOptions = { onCut: details => audio.cut(details) };
 const guide = createGuide($('guide-dialog'), practiceOptions);
 const analyzer = createAnalyzer($('analyzer-dialog'));
-const ratings = createRatingStore({ prepareOpening: match => runRatedWorker('prepare', match) });
+const ratings = createRatingStore({ prepareOpening: match => runRatedWorker('prepare', match),
+  chooseBot: typeof Worker === 'function' ? (match, budget) => runRatedWorker('move', match, budget) : undefined });
 const ratedDesk = createRatedDesk($('rated-dialog'), {
   read: () => ratings.read(), onStart: startRated, onForfeit: resignRated, onReset: resetRatings,
   onReplay: reviewRated, onPractice: playGardenPractice
@@ -64,6 +65,8 @@ let localDealState = null;
 let paintedBoard = null;
 let ratedMatch = null;
 let ratedMovePending = false;
+let ratedClockTimer;
+let ratedClockPending = null;
 
 function readStorage(key, tabOnly = false) {
   try { return JSON.parse((tabOnly ? sessionStorage : localStorage).getItem(key)); } catch { return null; }
@@ -384,20 +387,49 @@ function startDailyChallenge(seed, level) {
   audio.reveal();
   activate(next, { previewEnd: Date.now() + 2000, scroll: true });
 }
-function runRatedWorker(operation, match) {
+function runRatedWorker(operation, match, clockBudget = 0) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./rated-worker.js?v=10', import.meta.url), { type: 'module' });
-    const stop = (success, value) => {
+    const worker = new Worker(new URL('./rated-worker.js?v=11', import.meta.url), { type: 'module' });
+    let running = false, interrupted = false;
+    let timer = setTimeout(() => stop(false), 30_000);
+    function cleanUp() {
       clearTimeout(timer);
+      document.removeEventListener('visibilitychange', visibilityChanged);
       worker.terminate();
+    }
+    function stop(success, value) {
+      cleanUp();
       if (success) resolve(value);
       else reject(new Error('The bot calculation stopped. Retry from the current position.'));
+    }
+    function visibilityChanged() {
+      if (!running) return;
+      if (document.hidden) {
+        interrupted = true;
+        clearTimeout(timer);
+      } else if (interrupted) {
+        // Re-run an unfinished background search so suspension cannot consume
+        // its allowance. The saved turn still has its original start time.
+        cleanUp();
+        resolve(runRatedWorker(operation, match, clockBudget));
+      }
+    }
+    if (clockBudget) document.addEventListener('visibilitychange', visibilityChanged);
+    worker.onmessage = ({data}) => {
+      if (data.searchStarted) {
+        running = true;
+        interrupted = document.hidden;
+        clearTimeout(timer);
+        if (!interrupted) timer = setTimeout(() => stop(true, { edgeId: null, elapsedMs: clockBudget }), clockBudget);
+      } else if (clockBudget && interrupted && data.ok && data.result.elapsedMs >= clockBudget) {
+        // A background worker's wall-clock measurement may include time asleep.
+        // Defer a fresh measurement until this tab becomes visible.
+        worker.terminate();
+      } else stop(data.ok, data.result);
     };
-    const timer = setTimeout(() => stop(false), 30_000);
-    worker.onmessage = ({data}) => stop(data.ok, data.result);
     worker.onerror = () => stop(false);
     worker.onmessageerror = () => stop(false);
-    worker.postMessage({operation, game: match});
+    worker.postMessage({operation, game: match, clockBudget});
   });
 }
 function ratedFailure(reason) {
@@ -407,29 +439,40 @@ function ratedFailure(reason) {
     newer: 'This saved record needs a newer version of Groundwork.',
     stale: 'Another tab changed this match. Reopen Rated play for the latest position.',
     'prepare-failed': 'The rated worker could not prepare this garden. Retry to draw your match.',
+    'bot-failed': 'The bot calculation stopped. Retrying its move…',
     exhausted: 'This device has completed every deal in this rating pool.'
   };
   return descriptions[reason] || 'The rated action could not be saved. Reopen Rated play to try again.';
 }
 function enterRated(entry, scroll = false) {
-  const match = restoreGame(entry?.game);
+  const match = restoreGame(entry?.game, 0);
   if (!match || match.matchId !== entry.id) throw new Error('The saved rated match could not be restored.');
   ratedMatch = entry;
   $('rated-retry').hidden = true;
-  activate(match, {scroll});
+  const previewEnd = entry.timed && !match.moves.length && match.deadline !== null ? match.deadline - TURN_MS : 0;
+  activate(match, {scroll, previewEnd});
 }
 async function startRated(variant, level) {
   if (typeof Worker !== 'function') throw new Error('Rated play needs a browser with Web Worker support.');
-  const result = await ratings.start(variant, level);
+  const dialog = $('rated-dialog');
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  dialog.addEventListener('close', cancel);
+  let result;
+  try { result = await ratings.start(variant, level, { signal: controller.signal }); }
+  finally { dialog.removeEventListener('close', cancel); }
+  if (result.reason === 'cancelled') return;
   if (!result.ok) throw new Error(ratedFailure(result.reason));
-  if (!$('rated-dialog').open) return;
-  $('rated-dialog').close();
+  watchRatedClock();
+  if (!dialog.open) return;
+  dialog.close();
   audio.reveal();
-  enterRated(result.active, true);
+  enterRated(result.record ?? result.active, true);
 }
 async function resignRated(id) {
   const result = await ratings.forfeit(id);
   if (!result.ok) throw new Error(ratedFailure(result.reason));
+  watchRatedClock();
   if (ratedMatch?.id === id) enterLobby({variant: ratedMatch.variant});
   const message = result.record.reason === 'forfeit' ? 'Resignation recorded.' : 'This match had already ended.';
   return message + ' Rating change ' + signedRating(result.record.delta) + '.';
@@ -437,6 +480,7 @@ async function resignRated(id) {
 async function resetRatings() {
   const result = await ratings.reset();
   if (!result.ok) throw new Error(ratedFailure(result.reason));
+  watchRatedClock();
   if (ratedMatch) enterLobby();
   return 'Both rating histories have been reset.';
 }
@@ -451,7 +495,7 @@ function isGardenPractice(match) {
 }
 function playGardenPractice({variant, level, seed, boardVersion}, scroll = true) {
   const id = 'practice-' + freshSeed() + freshSeed() + freshSeed();
-  const practice = createRatedGame(variant, level, seed, id, boardVersion);
+  const practice = createRatedGame(variant, level, seed, id, boardVersion, false);
   if ($('rated-dialog').open) $('rated-dialog').close();
   if (scroll) audio.reveal();
   activate(practice, {scroll});
@@ -576,7 +620,7 @@ function renderHistory() {
   if (game.timedOut) {
     const item = document.createElement('li');
     item.className = 'history-row';
-    const result = isDailyMatch(game) && game.victor === game.seat ? 'You win.' : seatName(game.victor) + ' wins.';
+    const result = (ratedMatch || isDailyMatch(game)) && game.victor === game.seat ? 'You win.' : seatName(game.victor) + ' wins.';
     item.textContent = outcome() + ' ' + result;
     list.append(item);
   }
@@ -638,9 +682,10 @@ function renderMatch(animation = {}) {
   if (ratedMatch || practice) {
     const level = game.players[otherSide(game.seat)].level;
     $('daily-match-label').textContent = (ratedMatch ? 'Rated' : 'Unrated practice') + ' · ' +
-      ratedOpponentLabel(level, ratedMatch?.bot) + ' · Untimed';
+      ratedOpponentLabel(level, ratedMatch?.bot) + (game.timed ? ' · 10s per cut' : ' · Untimed');
   }
-  $('new-game').querySelector('span').textContent = ratedMatch && !won ? 'Pause match' : 'New game';
+  $('new-game').querySelector('span').textContent = ratedMatch && !won ? 'Leave board' : 'New game';
+  $('new-game').title = ratedMatch && game.timed && !won ? 'Leave the board. The rated clock keeps running.' : '';
   $('restart').hidden = Boolean(ratedMatch && !won);
   renderRatedReceipt();
   const custom = game.boardVersion === CUSTOM_BOARD_VERSION;
@@ -666,6 +711,27 @@ function renderMatch(animation = {}) {
   boardView.update({ board: game.board, live: game.live, side: game.side, locked: preview || !human, ...animation });
 }
 function sameMoves(a, b) { return a.length === b.length && a.every((id, i) => id === b[i]); }
+function watchRatedClock() {
+  clearTimeout(ratedClockTimer);
+  const { active } = ratings.read();
+  const due = ratedClockEvent(active);
+  if (due === null) return;
+  const position = active.id + '/' + active.game.moves.length;
+  if (ratedClockPending === position) return;
+  ratedClockTimer = setTimeout(async () => {
+    ratedClockPending = position;
+    const result = await ratings.refreshClock(active.id);
+    if (ratedClockPending === position) ratedClockPending = null;
+    if (!result.ok && result.reason !== 'ineligible') {
+      if (ratedMatch?.id === active.id) feedback(ratedFailure(result.reason));
+      ratedClockTimer = setTimeout(watchRatedClock, 1500);
+      return;
+    }
+    if (ratedMatch?.id === active.id) syncPosition();
+    ratedDesk.refresh();
+    watchRatedClock();
+  }, Math.max(0, due - Date.now()));
+}
 function newerStoredPosition() {
   if (!game.matchId) return null;
   const latest = game.opponent === 'link'
@@ -687,8 +753,23 @@ function syncPosition() {
       feedback(latest ? 'This rated match was resigned.' : 'The rated record changed in another tab.');
       return true;
     }
-    if (!sameMoves(latest.game.moves, game.moves) || latest.reason !== ratedMatch.reason) {
+    if (!sameMoves(latest.game.moves, game.moves) || latest.reason !== ratedMatch.reason ||
+        latest.game.deadline !== game.deadline || latest.timed !== game.timed) {
+      const moves = latest.game.moves;
+      if (phase === 'playing' && !latest.game.timedOut && moves.length === game.moves.length + 1 &&
+          game.moves.every((id, index) => moves[index] === id)) {
+        const next = playCut(game, moves.at(-1), game.deadline === null ? Date.now() : game.deadline - TURN_MS);
+        if (next) {
+          ratedMatch = latest;
+          displayCut({ ...next, deadline: latest.game.deadline });
+          return true;
+        }
+      }
       enterRated(latest);
+      if (latest.game.timedOut) {
+        audio.end({ timedOut: true });
+        boardView.celebrate(game.variant === 'green' ? 'green' : game.victor);
+      }
       return true;
     }
     return false;
@@ -699,6 +780,12 @@ function syncPosition() {
   return true;
 }
 function checkDeadline(now) {
+  if (ratedMatch?.timed) {
+    if (game.deadline === null || now < game.deadline) return false;
+    paintClock(0);
+    watchRatedClock();
+    return true;
+  }
   const resolved = expireTurn(game, now);
   if (resolved === game) return false;
   if (syncPosition()) return true;
@@ -725,10 +812,10 @@ function scheduleTurn() {
   clearTimeout(computerTimer);
   const position = game;
   tick();
-  if (game !== position || phase !== 'playing' || game.victor || game.opponent === 'link' || game.players[game.side].kind !== 'computer') return;
+  if (game !== position || phase !== 'playing' || game.victor || ratedMatch || game.opponent === 'link' || game.players[game.side].kind !== 'computer') return;
   computerTimer = setTimeout(async () => {
     if (phase !== 'playing' || game !== position || checkDeadline(Date.now())) return;
-    if (ratedMatch || isGardenPractice(position)) {
+    if (isGardenPractice(position)) {
       try {
         const { board, live, side, players, seed, moves } = position;
         const move = typeof Worker === 'function' ? await runRatedWorker('move', position) :
@@ -750,13 +837,14 @@ async function makeMove(id) {
   if (phase !== 'playing' || game.victor || (ratedMatch && ratedMovePending) || syncPosition()) return;
   const now = Date.now();
   if (checkDeadline(now)) return;
-  const next = playCut(game, id, now);
+  let next = playCut(game, id, now);
   if (!next) return;
   if (ratedMatch) {
     const previous = game;
     ratedMovePending = true;
     try {
       const result = next.victor ? await ratings.finish(next) : await ratings.checkpoint(next);
+      watchRatedClock();
       if (game !== previous || phase !== 'playing') return;
       if (!result.ok) {
         if (!syncPosition()) {
@@ -765,11 +853,12 @@ async function makeMove(id) {
         }
         return;
       }
-      if (result.record && (result.record.reason === 'forfeit' || !sameMoves(result.record.game.moves, next.moves))) {
+      if (result.record && (result.record.reason === 'forfeit' || result.record.game.timedOut || !sameMoves(result.record.game.moves, next.moves))) {
         syncPosition();
         return;
       }
       ratedMatch = next.victor ? result.record : result.active;
+      next = { ...next, deadline: ratedMatch.game.deadline };
     } catch {
       if (game === previous) {
         feedback('This cut could not be saved. Retry from the current position.');
@@ -780,8 +869,11 @@ async function makeMove(id) {
       ratedMovePending = false;
     }
   }
+  displayCut(ratedMatch ? next : startTurnClock(next, now));
+}
+function displayCut(next) {
   $('rated-retry').hidden = true;
-  game = startTurnClock(next, now);
+  game = next;
   const last = game.rows.at(-1);
   feedback();
   saveMatch();
@@ -808,11 +900,11 @@ function activate(next, { note = '', previewEnd = 0, scroll = false } = {}) {
     writeStorage(ratedViewKey, null, true);
   }
   const now = Date.now();
-  game = expireTurn(next, now);
+  game = ratedMatch ? next : expireTurn(next, now);
   $('rated-retry').hidden = true;
   setSeedQuery();
   previewUntil = !game.victor && Number.isSafeInteger(previewEnd) && previewEnd > now ? Math.min(previewEnd, now + 2000) : 0;
-  game = startTurnClock(game, previewUntil || now);
+  if (!ratedMatch) game = startTurnClock(game, previewUntil || now);
   lobby = null;
   for (const id of ['builder-dialog', 'analyzer-dialog']) {
     if ($(id).open) $(id).close();
@@ -846,8 +938,15 @@ function loadLocation() {
   if (viewedId && !location.hash.startsWith('#turn=') && !['daily', 'seed', 'board'].some(key => query.has(key))) {
     const state = ratings.read();
     const entry = state.active?.id === viewedId ? state.active : state.history?.find(row => row.id === viewedId);
-    if (entry?.game && entry.reason !== 'forfeit' && restoreGame(entry.game)) {
+    if (entry?.game && entry.reason !== 'forfeit') {
       enterRated(entry);
+      if (!entry.timed && !entry.reason) ratings.resume(entry.id).then(result => {
+        if (ratedMatch?.id === entry.id) {
+          if (result.ok) syncPosition();
+          else feedback(ratedFailure(result.reason));
+        }
+        watchRatedClock();
+      });
       return;
     }
   }
@@ -1087,6 +1186,7 @@ $('copy-link').addEventListener('click', async () => {
 });
 
 function refreshTime() {
+  watchRatedClock();
   if (phase === 'ready') { refreshDailyCard(); return; }
   if (!game || syncPosition()) return;
   if (phase === 'preview' && Date.now() >= previewUntil) endPreview();
@@ -1096,6 +1196,7 @@ document.addEventListener('visibilitychange', refreshTime);
 window.addEventListener('pageshow', refreshTime);
 window.addEventListener('storage', event => {
   if (event.key === RATING_KEY || event.key === null) {
+    watchRatedClock();
     if (ratedMatch) syncPosition();
     ratedDesk.refresh();
   }
@@ -1106,3 +1207,4 @@ window.addEventListener('storage', event => {
 window.addEventListener('hashchange', loadLocation);
 setScenery(readStorage(sceneryKey) !== false);
 loadLocation();
+watchRatedClock();

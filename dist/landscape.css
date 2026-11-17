@@ -1,13 +1,23 @@
 .hb-landscape {
+  --hb-print: url("./art/scenes/wildflower-meadow.webp");
   position: absolute;
   inset: 0;
   z-index: 0;
   overflow: hidden;
   contain: strict;
+  isolation: isolate;
   pointer-events: none;
   user-select: none;
   -webkit-user-select: none;
 }
+
+.hb-landscape[data-biome="orchard"]  { --hb-print: url("./art/scenes/orchard-grove.webp"); }
+.hb-landscape[data-biome="wetland"]  { --hb-print: url("./art/scenes/lily-pond.webp"); }
+.hb-landscape[data-biome="highland"] { --hb-print: url("./art/scenes/alpine-lake.webp"); }
+.hb-landscape[data-biome="woodland"] { --hb-print: url("./art/scenes/redwood-grove.webp"); }
+.hb-landscape[data-biome="coast"]    { --hb-print: url("./art/scenes/basalt-coast.webp"); }
+.hb-landscape[data-biome="canyon"]   { --hb-print: url("./art/scenes/mesa-canyon.webp"); }
+.hb-landscape[data-biome="terrace"]  { --hb-print: url("./art/scenes/vine-terraces.webp"); }
 
 .hb-landscape > svg {
   display: block;
@@ -15,13 +25,28 @@
   height: 100%;
 }
 
-/* Printed-paper grain and a soft falloff toward the corners. */
+.hb-landscape::before,
 .hb-landscape::after {
   content: "";
   position: absolute;
   inset: 0;
+}
+
+/* The atlas supplies fine engraved marks at the margins. Leave the seeded
+   silhouettes and playable branches legible through the middle of the plate. */
+.hb-landscape::before {
+  z-index: 1;
+  background: var(--hb-print) center 58% / cover no-repeat;
+  filter: grayscale(.68) sepia(.24);
+  mix-blend-mode: multiply;
+  opacity: .46;
+  mask-image: radial-gradient(ellipse at 50% 39%, #0001 16%, #0004 55%, #000b 84%, #000 100%);
+}
+
+.hb-landscape::after {
+  z-index: 2;
   background:
-    radial-gradient(125% 95% at 50% 38%, transparent 52%, rgba(66, 80, 48, .17) 100%),
+    radial-gradient(115% 95% at 48% 35%, transparent 52%, #756a4142 100%),
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 .32 0 0 0 0 .3 0 0 0 0 .2 0 0 0 .5 0'/%3E%3C/filter%3E%3Crect width='180' height='180' filter='url(%23n)' opacity='.2'/%3E%3C/svg%3E");
   mix-blend-mode: multiply;
 }
@@ -70,6 +95,21 @@
   opacity: 0;
 }
 
+#field[data-scenery="off"] .hb-field__dot { opacity: .25; }
+#field[data-scenery="off"] .hb-field {
+  background-image: radial-gradient(ellipse at 48% 36%, #fffcf1 0%, #f7f1e1 72%, #eae3cf 100%);
+}
+
+@media (max-width: 36rem) {
+  .hb-landscape::before { opacity: .34; }
+}
+
+@media (prefers-contrast: more) {
+  .hb-landscape { opacity: .36; }
+  .hb-landscape::before, .hb-landscape::after { display: none; }
+}
+
 @media (forced-colors: active) {
   .hb-landscape { display: none; }
+  #field[data-scenery="off"] .hb-field { background: Canvas; }
 }

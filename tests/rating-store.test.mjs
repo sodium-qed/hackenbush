@@ -1,8 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRatedGame, createRatingStore, HISTORY_PER_VARIANT, prepareRatedOpening, RATING_KEY } from '../dist/js/rating.js';
+import { createRatedGame, createRatingStore, HISTORY_PER_VARIANT, prepareRatedOpening, ratedClockEvent, RATED_OPENING_MS, RATING_KEY } from '../dist/js/rating.js';
 import { BOT_CALIBRATION } from '../dist/js/bot-calibration.js';
-import { playCut, restoreGame, saveData } from '../dist/js/session.js';
+import { playCut, restoreGame, saveData, startTurnClock, TURN_MS } from '../dist/js/session.js';
 import { legalMoves } from '../dist/js/rules.js';
 import { ratedBotMove } from '../dist/js/rated-deal.js';
 
@@ -20,20 +20,29 @@ function fixture(word = 0) {
   // Two separately constructed storage handles share an origin-wide lock.
   let pending = Promise.resolve();
   const locks = { request(_name, operation) { const next = pending.then(operation); pending = next.catch(() => {}); return next; } };
-  const store = (extras = {}) => createRatingStore({ storage: { ...storage }, entropy, locks, clock: () => time++, ...extras });
-  return { store, values, failReads(v) { readFails = v; }, failWrites(v) { writeFails = v; } };
+  const setTime = value => { time = value; };
+  const store = (extras = {}) => ({ ...createRatingStore({ storage: { ...storage }, entropy, locks, clock: () => time, ...extras }), setTime });
+  return { store, values, setTime, failReads(v) { readFails = v; }, failWrites(v) { writeFails = v; } };
 }
 
 async function start(store, variant = 'green', level = 'nelson') {
   const result = await store.start(variant, level);
   assert.equal(result.ok, true, result.reason);
-  return restoreGame(result.active.game);
+  const game = restoreGame(result.active.game, 0);
+  store.setTime(game.deadline - TURN_MS);
+  return game;
+}
+
+function cut(game, id) {
+  const at = game.deadline - TURN_MS;
+  const next = playCut(game, id, at);
+  return next && startTurnClock(next, at);
 }
 
 function step(game, humanLevel = game.boardVersion === 1 ? 'expert' : 'noam') {
   const level = game.side === game.seat ? humanLevel : game.players[game.side].level;
   const { edgeId } = ratedBotMove(game.board, game.live, game.side, level, game.seed, game.moves.length);
-  return playCut(game, edgeId);
+  return cut(game, edgeId);
 }
 
 async function playUntilLast(store, opening) {
@@ -59,7 +68,7 @@ test('an unfinished issued deal survives reload, variant changes and another sta
   assert.equal(assignment.bot.rating, 1300);
   assert.equal(assignment.bot.sourceKind, 'assigned-prior');
   assert.equal(assignment.opening.edges, game.board.edges.length);
-  const next = playCut(game, 'e100');
+  const next = cut(game, 'e100');
   assert.equal((await first.finish(next)).reason, 'unfinished');
   assert.ok((await first.checkpoint(next)).ok);
   const reopened = f.store();
@@ -75,7 +84,7 @@ test('only matching configured games and a verified legal transition can alter t
   const store = fixture().store(), game = await start(store), next = step(game);
   for (const derived of [{ ...next, opponent: 'link' }, { ...next, seed: 'DAILY-01-01-2026' },
     { ...next, seed: 'different' }, { ...next, boardVersion: 6, difficulty: 'custom' },
-    { ...next, matchId: 'ordinary-replay' }, { ...next, timed: true },
+    { ...next, matchId: 'ordinary-replay' }, { ...next, timed: false },
     { ...next, players: { ...next.players, [game.seat]: { kind: 'computer' } } },
     { ...next, victor: game.seat }, { ...next, moves: ['e999'] }]) {
     assert.equal((await store.checkpoint(derived)).ok, false);
@@ -86,8 +95,117 @@ test('only matching configured games and a verified legal transition can alter t
   const actual = step(next);
   const wrongId = legalMoves(next.board, next.live, next.side).find(id => id !== actual.moves.at(-1));
   assert.ok(wrongId);
-  assert.equal((await store.checkpoint(playCut(next, wrongId))).reason, 'ineligible');
+  assert.equal((await store.checkpoint(cut(next, wrongId))).reason, 'ineligible');
   assert.equal((await store.checkpoint(game)).reason, 'stale');
+});
+
+test('rated clocks start after the reveal and a last-millisecond cut gives the bot its own full turn', async () => {
+  const f = fixture(), store = f.store();
+  const { active } = await store.start('green', 'martin');
+  const game = restoreGame(active.game, 0);
+  assert.equal(game.side, game.seat);
+  assert.equal(game.timed, true);
+  assert.equal(game.deadline, active.startedAt + RATED_OPENING_MS + TURN_MS);
+  f.setTime(active.startedAt + RATED_OPENING_MS - 1);
+  assert.equal((await store.checkpoint(cut(game, 'e100'))).reason, 'ineligible');
+  f.setTime(game.deadline - 1);
+  assert.equal((await f.store().resume(active.id)).active.game.deadline, game.deadline);
+  const moved = await store.checkpoint(cut(game, 'e100'));
+  assert.equal(moved.active.game.deadline, game.deadline - 1 + TURN_MS);
+  assert.deepEqual(moved.active.game.moves, ['e100']);
+});
+
+test('a clock expires at zero, survives a failed write, and settles once across retries, tabs, late cuts and resignations', async () => {
+  const f = fixture(), store = f.store(), game = await start(store, 'green', 'martin');
+  const before = store.read(), late = cut(game, 'e100');
+  f.setTime(game.deadline);
+  f.failWrites(true);
+  assert.equal((await store.refreshClock(game.matchId)).reason, 'unavailable');
+  assert.deepEqual(store.read(), before);
+  f.failWrites(false);
+  const results = await Promise.all([store.refreshClock(game.matchId), f.store().checkpoint(late), f.store().forfeit(game.matchId)]);
+  const { record } = results[0];
+  for (const result of results) assert.deepEqual(result.record, record);
+  assert.equal(record.reason, 'timeout');
+  assert.equal(record.won, false);
+  assert.equal(record.game.timedOut, game.seat);
+  assert.equal(record.endedAt, game.deadline);
+  assert.deepEqual(record.game.moves, []);
+  assert.ok(record.rated && record.delta < 0);
+  assert.equal(restoreGame(record.game).victor, game.players.blue.kind === 'computer' ? 'blue' : 'red');
+  f.setTime(game.deadline + 60_000);
+  assert.deepEqual((await f.store().resume(game.matchId)).record, record);
+  assert.equal(store.read().pools.green.losses, 1);
+  assert.equal(store.read().history.length, 1);
+});
+
+test('a suspended bot turn replays at its scheduled time and the next human deadline survives reload', async () => {
+  const f = fixture(), store = f.store(), game = await start(store, 'green', 'martin');
+  const { active } = await store.checkpoint(cut(game, 'e100'));
+  const due = ratedClockEvent(active);
+  const bot = restoreGame(active.game, 0);
+  const decision = ratedBotMove(bot.board, bot.live, bot.side, active.level, bot.seed, bot.moves.length);
+  const tab = f.store({ chooseBot: () => ({ ...decision, elapsedMs: 35 }) });
+  f.setTime(due - 1);
+  assert.deepEqual((await tab.refreshClock(active.id)).active.game, active.game);
+  f.setTime(due + 5000);
+  const reply = await tab.resume(active.id);
+  assert.deepEqual(reply.active.game.moves, ['e100', decision.edgeId]);
+  assert.equal(reply.active.game.deadline, due + 35 + TURN_MS);
+  assert.equal(ratedClockEvent(reply.active), reply.active.game.deadline);
+  f.setTime(due + 90_000);
+  const timeout = await f.store().resume(active.id);
+  assert.equal(timeout.record.game.timedOut, game.seat);
+  assert.equal(timeout.record.endedAt, due + 35 + TURN_MS);
+});
+
+test('a closed board catches up the bot and an overdue human turn in one transaction', async () => {
+  const f = fixture(), store = f.store(), game = await start(store, 'green', 'martin');
+  const { active } = await store.checkpoint(cut(game, 'e100'));
+  const due = ratedClockEvent(active);
+  const tab = f.store({ chooseBot: bot => ({ ...ratedBotMove(bot.board, bot.live, bot.side, active.level, bot.seed, 1), elapsedMs: 5 }) });
+  f.setTime(due + 86_400_000);
+  const { record } = await tab.refreshClock(active.id);
+  assert.equal(record.game.moves.length, 2);
+  assert.equal(record.reason, 'timeout');
+  assert.equal(record.game.timedOut, game.seat);
+  assert.equal(record.endedAt, due + 5 + TURN_MS);
+  assert.equal(tab.read().pools.green.games, 1);
+});
+
+test('a bot that actually exhausts its search clock loses on time', async () => {
+  const f = fixture(), store = f.store(), game = await start(store, 'green', 'martin');
+  const { active } = await store.checkpoint(cut(game, 'e100'));
+  const due = ratedClockEvent(active);
+  const slow = f.store({ chooseBot: () => ({ edgeId: null, elapsedMs: active.game.deadline - due }) });
+  f.setTime(active.game.deadline);
+  const { record } = await slow.refreshClock(active.id);
+  assert.equal(record.reason, 'timeout');
+  assert.equal(record.won, true);
+  assert.notEqual(record.game.timedOut, game.seat);
+  assert.equal(record.endedAt, active.game.deadline);
+  assert.ok(record.delta > 0);
+  assert.equal(f.store().read().pools.green.wins, 1);
+});
+
+test('a v3 untimed full garden acquires its first clock on return and keeps its original deal and price', async () => {
+  const f = fixture(), store = f.store(), game = await start(store, 'redblue', 'martin');
+  const ledger = JSON.parse(f.values.get(RATING_KEY));
+  ledger.version = 3;
+  ledger.active.timed = ledger.active.game.timed = false;
+  ledger.active.game.deadline = null;
+  f.values.set(RATING_KEY, JSON.stringify(ledger));
+  f.setTime(9_000_000);
+  const old = await store.refreshClock(game.matchId);
+  assert.equal(old.active.game.deadline, null);
+  const result = await store.resume(game.matchId);
+  assert.equal(result.active.timed, true);
+  assert.equal(result.active.game.deadline, 9_000_000 + RATED_OPENING_MS + TURN_MS);
+  assert.deepEqual(result.active.forecast, ledger.active.forecast);
+  assert.equal(result.active.id, game.matchId);
+  assert.equal(result.active.game.players[game.side].name, game.players[game.side].name);
+  f.setTime(9_000_500);
+  assert.deepEqual((await f.store().resume(game.matchId)).active, result.active);
 });
 
 test('one atomic terminal settlement updates a single pool, persists its receipt, and tolerates a retry', async () => {
@@ -137,9 +255,10 @@ test('concurrent starts and divergent continuations retain only the first durabl
   const [first, second] = await Promise.all([a.start('green', 'nelson'), b.start('redblue', 'martin')]);
   assert.ok(first.ok && second.ok);
   assert.equal(first.active.id, second.active.id);
-  const game = restoreGame(first.active.game);
+  const game = restoreGame(first.active.game, 0);
+  f.setTime(game.deadline - TURN_MS);
   assert.equal(game.side, game.seat);
-  const [left, right] = legalMoves(game.board, game.live, game.side).map(id => playCut(game, id)).filter(g => !g.victor);
+  const [left, right] = legalMoves(game.board, game.live, game.side).map(id => cut(game, id)).filter(g => !g.victor);
   const [one, two] = await Promise.all([a.checkpoint(left), b.checkpoint(right)]);
   assert.equal(one.ok, true);
   assert.equal(two.reason, 'stale');
@@ -192,6 +311,9 @@ test('a reset while a worker is preparing, or its failure, cannot resurrect a dr
   assert.equal(store.read().active, null);
   const brokenWorker = f.store({ prepareOpening: () => { throw Error('worker unavailable'); } });
   assert.equal((await brokenWorker.start('green', 'nelson')).reason, 'prepare-failed');
+  const controller = new AbortController();
+  const closedDesk = f.store({ prepareOpening: game => { controller.abort(); return prepareRatedOpening(game); } });
+  assert.equal((await closedDesk.start('green', 'martin', { signal: controller.signal })).reason, 'cancelled');
   assert.equal(store.read().issued, 0);
 });
 
@@ -258,7 +380,7 @@ for (const version of [1, 2]) test(`v${version} profiles rebase once, retain rep
   f.values.set(RATING_KEY, raw);
   const state = store.read();
   assert.equal(state.status, 'ok');
-  assert.equal(state.version, 3);
+  assert.equal(state.version, 4);
   assert.equal(f.values.get(RATING_KEY), raw);
   assert.equal(state.pools.green.rating, 1200);
   assert.equal(state.pools.redblue.rating, oldRecord.after + 200);
@@ -274,21 +396,22 @@ for (const version of [1, 2]) test(`v${version} profiles rebase once, retain rep
   assert.equal(restoreGame(record.game).victor, 'blue');
   const resumed = await store.start('green', 'easy');
   assert.equal(resumed.active.id, old.active.id);
-  assert.deepEqual(resumed.active.game, old.active.game);
+  assert.deepEqual(resumed.active.game, { ...old.active.game, timed: true, deadline: 100_000 + TURN_MS });
+  const migrated = f.values.get(RATING_KEY);
   assert.equal(resumed.active.forecast.offset, old.active.forecast.offset - 200);
   for (const result of ['win', 'loss']) {
     assert.equal(resumed.active.forecast[result].rating, old.active.forecast[result].rating + 200);
     assert.equal(resumed.active.forecast[result].rd, old.active.forecast[result].rd);
   }
-  const opening = restoreGame(resumed.active.game), reply = step(opening);
+  const opening = restoreGame(resumed.active.game, 0), reply = step(opening);
   assert.equal(opening.boardVersion, 1);
   assert.equal(opening.players[opening.side].level, 'easy');
   f.failWrites(true);
   assert.equal((await store.checkpoint(reply)).reason, 'unavailable');
-  assert.equal(f.values.get(RATING_KEY), raw);
+  assert.equal(f.values.get(RATING_KEY), migrated);
   f.failWrites(false);
   assert.ok((await store.checkpoint(reply)).ok);
-  assert.equal(JSON.parse(f.values.get(RATING_KEY)).version, 3);
+  assert.equal(JSON.parse(f.values.get(RATING_KEY)).version, 4);
   const final = await playUntilLast(store, reply);
   const settled = await store.finish(final);
   assert.ok(settled.ok);

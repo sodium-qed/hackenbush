@@ -1,9 +1,11 @@
 .hb-field {
-  --hb-paper: #f7f7ed;
-  --hb-joint: #304333;
-  --hb-green: #286243;
-  --hb-red: #ad493a;
-  --hb-blue: #305f90;
+  --hb-paper: #f7f1e1;
+  --hb-joint: #233f34;
+  --hb-green: #266349;
+  --hb-red: #ac4132;
+  --hb-blue: #255d87;
+  --hb-focus: #5b421c;
+  --hb-trim: #7a7958a6;
   --hb-stem: 5;
   --hb-target-stem: 5.7;
   --hb-halo: 14px;
@@ -15,13 +17,33 @@
   aspect-ratio: 900 / var(--hb-height, 270);
   overflow: hidden;
   background-color: var(--hb-paper);
-  background-image: radial-gradient(ellipse at 50% 43%, #faf9ef 0%, #f7f7ed 75%);
+  background-image: radial-gradient(ellipse at 48% 36%, #fffcf1 0%, #f7f1e1 72%, #eae3cf 100%);
+}
+
+/* A printed plate rule sits above both the scenery and the plain game paper. */
+.hb-field::after {
+  content: "";
+  position: absolute;
+  z-index: 2;
+  inset: 6px;
+  pointer-events: none;
+  border: 1px solid #646e492e;
+  background:
+    linear-gradient(var(--hb-trim) 0 0) left top / 15px 1px,
+    linear-gradient(var(--hb-trim) 0 0) left top / 1px 10px,
+    linear-gradient(var(--hb-trim) 0 0) right top / 15px 1px,
+    linear-gradient(var(--hb-trim) 0 0) right top / 1px 10px,
+    linear-gradient(var(--hb-trim) 0 0) left bottom / 15px 1px,
+    linear-gradient(var(--hb-trim) 0 0) left bottom / 1px 10px,
+    linear-gradient(var(--hb-trim) 0 0) right bottom / 15px 1px,
+    linear-gradient(var(--hb-trim) 0 0) right bottom / 1px 10px;
+  background-repeat: no-repeat;
 }
 
 .hb-field--dense {
-  --hb-stem: 3.75;
-  --hb-target-stem: 4.6;
-  --hb-halo: 10px;
+  --hb-stem: 3.9;
+  --hb-target-stem: 4.9;
+  --hb-halo: 11px;
 }
 
 .hb-field__landscape {
@@ -51,6 +73,7 @@
 }
 
 .hb-field__ground,
+.hb-field__cut-mark,
 .hb-field__shadows,
 .hb-field__sparks,
 .hb-field__regions,
@@ -68,15 +91,16 @@
 
 .hb-field__ground-line {
   fill: none;
-  stroke: #515d47;
-  stroke-width: 1.45;
-  stroke-linecap: square;
+  stroke: #4b5940;
+  stroke-width: 1.55;
+  stroke-linecap: round;
+  filter: drop-shadow(0 1px 0 #f5e5bd);
 }
 
 .hb-field__mound {
-  fill: #a08a5c;
-  stroke: #6a5f3e;
-  stroke-width: .7;
+  fill: #ac8a59;
+  stroke: #705d3c;
+  stroke-width: .85;
   stroke-linejoin: round;
 }
 
@@ -91,13 +115,13 @@
 
 .hb-field__etch {
   fill: none;
-  stroke: #737f65;
-  stroke-width: 0.85;
+  stroke: #7b7858;
+  stroke-width: .85;
 }
 
-.hb-field--green { --hb-branch: var(--hb-green); }
-.hb-field--red { --hb-branch: var(--hb-red); }
-.hb-field--blue { --hb-branch: var(--hb-blue); }
+.hb-field--green { --hb-branch: var(--hb-green); --hb-rest: #476b50; }
+.hb-field--red { --hb-branch: var(--hb-red); --hb-rest: #985344; }
+.hb-field--blue { --hb-branch: var(--hb-blue); --hb-rest: #4a6a83; }
 
 .hb-field__edge {
   outline: none;
@@ -123,9 +147,9 @@
 }
 
 .hb-field__edge-keyline {
-  stroke: #fff7de;
-  stroke-width: calc((var(--hb-stem) + 1.9) * 1px);
-  opacity: .77;
+  stroke: #fff6da;
+  stroke-width: calc((var(--hb-stem) + 2.1) * 1px);
+  opacity: .84;
 }
 
 .hb-field__stem {
@@ -133,15 +157,19 @@
   stroke-width: var(--hb-stem);
 }
 
-.hb-field--dense .hb-field__stem--support { stroke-width: 4.25; }
+.hb-field--dense .hb-field__stem--support { stroke-width: 4.4; }
+
+.hb-field--interactive .hb-field__edge[aria-disabled="true"] .hb-field__stem {
+  stroke: var(--hb-rest);
+}
 
 /* Light falls from the upper left: a soft cast shadow below each branch
    and a narrow highlight along its lit side. */
 .hb-field__shadow {
-  stroke: #2d3a24;
-  stroke-width: calc((var(--hb-stem) + 2.4) * 1px);
-  opacity: .2;
-  transform: translate(1.3px, 2.5px);
+  stroke: #394332;
+  stroke-width: calc((var(--hb-stem) + 2.1) * 1px);
+  opacity: .24;
+  transform: translate(1px, 1.9px);
   transition: opacity 140ms ease-out;
 }
 
@@ -161,9 +189,10 @@
 }
 
 .hb-field__stripes {
-  stroke: var(--hb-paper);
-  stroke-width: 1.35;
+  stroke: #fff7df;
+  stroke-width: 1.5px;
   stroke-linecap: butt;
+  vector-effect: non-scaling-stroke;
 }
 
 .hb-field__halo {
@@ -173,22 +202,27 @@
 }
 
 .hb-field__edge--hint .hb-field__halo {
-  stroke: #a7862b;
+  stroke: #9c741f;
   stroke-width: calc(var(--hb-halo) + 1px);
   stroke-linecap: butt;
   stroke-dasharray: 3.4 2.8;
-  opacity: 0.56;
+  opacity: .73;
 }
-
-.hb-field__edge--hint .hb-field__halo { animation: hb-field-hint 1.1s linear infinite; }
 
 .hb-field__edge--target .hb-field__halo {
   stroke: var(--hb-branch);
   stroke-width: var(--hb-halo);
   stroke-linecap: round;
   stroke-dasharray: none;
-  opacity: 0.3;
-  animation: hb-field-breathe 1.5s ease-in-out infinite;
+  opacity: .36;
+}
+
+.hb-field__edge:focus-visible .hb-field__halo {
+  stroke: var(--hb-focus);
+  stroke-width: calc(var(--hb-halo) + 3px);
+  stroke-linecap: butt;
+  stroke-dasharray: 2.5 3.5;
+  opacity: 1;
 }
 
 .hb-field__edge--target .hb-field__edge-keyline {
@@ -198,11 +232,6 @@
 }
 
 .hb-field__edge--target .hb-field__sheen { opacity: .55; }
-
-@keyframes hb-field-breathe {
-  0%, 100% { opacity: .3; stroke-width: var(--hb-halo); }
-  50% { opacity: .18; stroke-width: calc(var(--hb-halo) + 5px); }
-}
 
 @keyframes hb-field-hint {
   to { stroke-dashoffset: -6.2; }
@@ -231,8 +260,31 @@
 
 .hb-field__joint--root {
   paint-order: stroke;
-  stroke: var(--hb-paper);
-  stroke-width: 1.6;
+  stroke: #edce8b;
+  stroke-width: 2.6;
+}
+
+.hb-field__root-mark {
+  fill: none;
+  stroke: #625735;
+  stroke-width: 1.05;
+  stroke-linecap: round;
+}
+
+.hb-field__cut-mark circle {
+  fill: #fff6df;
+  stroke: #725332;
+  stroke-width: 1px;
+  stroke-dasharray: 2 1.5;
+  vector-effect: non-scaling-stroke;
+}
+
+.hb-field__cut-mark path {
+  fill: none;
+  stroke: #664627;
+  stroke-width: 1.45px;
+  stroke-linecap: round;
+  vector-effect: non-scaling-stroke;
 }
 
 .hb-field__joint--falling {
@@ -251,21 +303,19 @@
 }
 
 .hb-field__scissors-mark {
-  transform-origin: 0 -3.9px;
-  filter: drop-shadow(0 1.2px 1px rgba(38, 48, 30, .34));
-  animation: hb-field-snip 1.15s ease-in-out infinite;
+  transform-origin: 0 0;
+  transform: scale(1.16);
+  filter: drop-shadow(0 1.3px 1px rgba(38, 48, 30, .38));
 }
 
-.hb-field__scissors:not([display="none"]) { animation: hb-field-arrive 170ms cubic-bezier(.2, 1.5, .5, 1) both; }
+@media (prefers-reduced-motion: no-preference) {
+  .hb-field__scissors:not([display="none"]) { animation: hb-field-arrive 140ms ease-out both; }
+  .hb-field__edge--hint:not(:focus-visible) .hb-field__halo { animation: hb-field-hint 1.3s linear 3; }
+}
 
 @keyframes hb-field-arrive {
   from { opacity: 0; }
   to { opacity: 1; }
-}
-
-@keyframes hb-field-snip {
-  0%, 100% { transform: scale(1.18) rotate(0deg); }
-  50% { transform: scale(1.18) rotate(-7deg) translateY(-.9px); }
 }
 
 .hb-field__scissor-back,
@@ -277,19 +327,21 @@
 }
 
 .hb-field__scissor-back {
-  stroke: var(--hb-paper);
-  stroke-width: 4.3;
+  stroke: #fff4d7;
+  stroke-width: 4.7;
 }
 
 .hb-field__scissor-ink,
 .hb-field__scissor-handle {
-  stroke: #303b2d;
-  stroke-width: 1.65;
+  stroke: #233f34;
+  stroke-width: 1.8;
 }
 
-.hb-field__scissor-handle,
+.hb-field__scissor-handle { fill: #f6d99a; }
 .hb-field__scissor-pin {
-  fill: var(--hb-paper);
+  fill: #e1ac51;
+  stroke: #3e482e;
+  stroke-width: .8;
 }
 
 .hb-field__ring {
@@ -357,6 +409,27 @@
   .hb-field__hit { stroke-width: 37px; }
 }
 
+@media (max-width: 36rem) {
+  #board .hb-field--dense {
+    --hb-stem: 4.1;
+    min-height: clamp(244px, 65vw, 292px);
+  }
+  #board .hb-field__scissors-mark { transform: scale(1.32); }
+  #board .hb-field__stripes { stroke-width: 1.35px; }
+}
+
+@media (prefers-contrast: more) {
+  .hb-field {
+    --hb-green: #184b32;
+    --hb-red: #8c291d;
+    --hb-blue: #154869;
+    --hb-focus: #312810;
+  }
+  .hb-field--interactive .hb-field__edge[aria-disabled="true"] .hb-field__stem { stroke: var(--hb-branch); }
+  .hb-field__edge-keyline { opacity: 1; }
+  .hb-field__sheen { opacity: .16; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .hb-field__region,
   .hb-field__stem,
@@ -374,6 +447,7 @@
 
 @media (forced-colors: active) {
   .hb-field { background: Canvas; }
+  .hb-field::after { display: none; }
   .hb-field__regions,
   .hb-field__landscape,
   .hb-field__peel,
@@ -384,10 +458,13 @@
   .hb-field__edge-keyline { display: none; }
   .hb-field__dot { fill: GrayText; }
   .hb-field__ground-line,
+  .hb-field__root-mark,
   .hb-field__etch,
   .hb-field__stem,
   .hb-field__scissor-ink,
   .hb-field__scissor-handle { stroke: CanvasText; }
+  .hb-field__ground-line, .hb-field__scissors-mark { filter: none; }
+  .hb-field--interactive .hb-field__edge[aria-disabled="true"] .hb-field__stem { stroke: CanvasText; }
   .hb-field__joint { fill: CanvasText; }
   .hb-field__joint--root { stroke: Canvas; }
   .hb-field__joint--target { fill: Canvas; stroke: Highlight; }
@@ -395,6 +472,9 @@
   .hb-field__scissor-back { stroke: Canvas; }
   .hb-field__scissor-handle,
   .hb-field__scissor-pin { fill: Canvas; }
+  .hb-field__cut-mark circle { fill: Canvas; stroke: CanvasText; }
+  .hb-field__cut-mark path { stroke: CanvasText; }
   .hb-field__edge--target .hb-field__halo,
-  .hb-field__edge--hint .hb-field__halo { stroke: Highlight; opacity: 0.75; }
+  .hb-field__edge--hint .hb-field__halo,
+  .hb-field__edge:focus-visible .hb-field__halo { stroke: Highlight; opacity: 1; }
 }

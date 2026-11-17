@@ -2,9 +2,18 @@
 
 **[Play Hackenbush in your browser](https://sodium-qed.github.io/hackenbush/)**
 
-Play **Green Hackenbush** or **Red–Blue Hackenbush** on a generated garden, draw your own board, or take on the daily puzzle. Standard matches and daily challenges give each player 10 seconds per cut. Rated bot matches are untimed.
+Play **Green Hackenbush** or **Red–Blue Hackenbush** in a live ranked match, invite a friend to a private garden, or play locally against a bot. Every ranked turn gives the active player ten seconds to cut. You can also draw a board, solve the daily puzzle or practice a seed at your own pace.
 
-![A Hackenbush match in the browser](media/hackenbush-table.jpg)
+## Play online
+
+- **Ranked matchmaking** — Choose Green or Red–Blue and select **Find opponent**. The server pairs two waiting players in that ruleset. Each online rating starts at 1200. A completed ranked result updates both players’ Elo.
+- **Play a friend** — Select **Create room**. Your friend can type the six-character code or open the invitation and select **Join room**. Private matches leave both ratings intact.
+
+Both players get a four-second opening look. The server checks each cut, drops unsupported branches and starts the next turn. Both screens update automatically. Reloading in the same browser reconnects to the game while the clock continues. That browser holds the key to your guest profile. Clearing its site data starts a new profile.
+
+The public game and its multiplayer server also run together at [Groundwork Arena](https://groundwork-arena.bowenna2011.chatgpt.site/).
+
+![The Groundwork lobby with ranked matchmaking and private rooms](media/hackenbush-table.jpg)
 
 ## Start a match
 
@@ -45,7 +54,7 @@ Open **Rated**, choose Green or Red–Blue and pick an opponent. Each ruleset st
 
 **Draw rated match** deals a full garden from the regular six-hex generator and assigns the seats. For example, `48094F` grows the same 123-branch Vine terraces in Rated and ordinary play. The bot selection changes the opponent's decisions. The seed and ruleset determine every branch, attachment and color. [Open the regular map](https://sodium-qed.github.io/hackenbush/?seed=48094F&v=5)
 
-Pause and resume your assigned match at any time. The generator uses fresh deals, and an unfinished game occupies the rated slot until you finish or resign it. If every possible sequence against that bot gives the same outcome, the result carries zero rating evidence. Games whose eligibility cannot be certified also carry zero weight. A perfect-play advantage by itself does not settle what a fallible player and bot will do.
+Rated bot matches give you a two-second opening look and ten seconds per cut. Returning to a match restores the current clock or shows the result if a clock expired. The generator uses fresh deals, and an unfinished game occupies the rated slot until it ends. If every possible sequence against that bot gives the same outcome, the result carries zero rating evidence. Games whose eligibility cannot be certified also carry zero weight. A perfect-play advantage by itself does not settle what a fallible player and bot will do.
 
 The result card shows your change. Open **Rated** to see the progression chart, uncertainty band, recent opponents and replays. **Practice a seed** lets you enter a six-hex code and face the selected bot. You can also open the same board and bot directly from a completed match. On Green `48094F` you open as Blue and have a winning move against Noam. [Try this unrated challenge](https://sodium-qed.github.io/hackenbush/?seed=48094F&v=5&rules=green&bot=noam)
 
@@ -69,25 +78,29 @@ Try the sunflower in the untimed **Practice garden** before drawing seats. Open 
 
 Open **Sound** in the top bar to preview a leaf snip, wood snap, glass ping, stone chip, cable twang, falling branches, or a match cue. Adjust the volume or turn on garden ambience. The settings are remembered on this device.
 
-## Play on two devices
+## Play asynchronously with turn links
 
-In **Turn links**, enter both players’ names and choose yours under **On this device** before the draw. If you draw the first turn, make the opening cut after your two-second look. If the other player opens, send the opening invitation. Their device gives them a fresh two-second look at the board and assignments before starting their clock.
+For correspondence play, open **Turn links**, enter both players’ names and choose yours under **On this device** before the draw. If you draw the first turn, make the opening cut after your two-second look. If the other player opens, send the opening invitation. Their device gives them a fresh two-second look at the board and assignments before starting their clock.
 
 After each cut, send the next link to your opponent. On later turns, the recipient’s 10 seconds start when they open the link. Time in transit is free. Each link carries the board, players, draw and move history. If your clock expires on your device, send the result link to share the timeout.
 
 ## Run locally
 
-Serve the static files with Python 3 and open the local address.
+Use Node.js 22.13 or later. Start the game and its multiplayer API together from this checkout.
 
 ```sh
-python3 -m http.server 8000 --directory dist
+npm ci
+npm start
 ```
 
-Open <http://localhost:8000>. Run the game tests with Node.js 20 or later.
+Open <http://localhost:5173>. Two different browser profiles can play together. For two devices on a local network, start with `npm start -- --host 0.0.0.0` and open the host computer’s LAN address on both devices. Matches and ratings are stored in `.local/arena.sqlite`. Set `ARENA_DB` to use another database file.
 
 ```sh
-node --test tests/*.test.mjs
+npm test
+npm run build
 ```
+
+The build produces a self-contained Worker in `dist/server/index.js`. The Worker serves both the game and `/api/`, using a D1 binding named `DB` and the SQL migrations in `drizzle/`. The tracked public files in `dist/` also run on GitHub Pages. The Pages client connects to the multiplayer origin declared in `dist/index.html`.
 
 Reproduce the analyzer benchmark, structural study and calibrated ladder from the repository root.
 
@@ -101,4 +114,4 @@ node scripts/full-garden-study.mjs
 
 With Python Playwright and Chromium installed, `python3 scripts/smoke-browser.py` also plays a full rated game through the interface, opens the same game in two tabs, checks the rating chart and exercises the replay workers.
 
-The game runs in the browser. Turn links work without accounts or a game server. The typefaces in `dist/fonts` include their Open Font Licenses.
+Local play and correspondence links work on a static host. Live rooms and the ranked queue use the multiplayer server. The typefaces in `dist/fonts` include their Open Font Licenses.

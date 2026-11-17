@@ -84,7 +84,7 @@ function openingPosition(config, boardVersion, newMatch) {
     const other = otherSide(seat);
     assignments = { [seat]: { kind: 'human', ...players?.[seat] }, [other]: { kind: 'computer', ...players?.[other] } };
   }
-  const seats = normalizePlayers(assignments, firstSide, opponent, mapDuel);
+  const seats = normalizePlayers(assignments, firstSide, opponent, boardVersion === RATED_BOARD_VERSION && opponent === 'computer');
   const humanSide = sides.find(side => seats[side].kind === 'human' && seats[otherSide(side)].kind === 'computer');
   const humanOnDevice = humanSide && (seat === undefined || seat === humanSide);
   if (mapDuel && (!humanOnDevice || !isRatedBot(seats[otherSide(humanSide)].level))) {
@@ -218,7 +218,7 @@ export function undoTurn(game) {
 export function matchKey({
   seed, variant, difficulty, boardVersion = 1, timed = boardVersion >= 3, firstSide = 'blue', players, opponent = 'local', matchId,
 }) {
-  const seats = normalizePlayers(players, firstSide, opponent, isUntimedMapDuel(boardVersion, opponent, timed));
+  const seats = normalizePlayers(players, firstSide, opponent, boardVersion === RATED_BOARD_VERSION && opponent === 'computer');
   const map = normalizeMatchSeed(seed, boardVersion, opponent);
   return JSON.stringify([variant, difficulty, map, boardVersion, timed, firstSide, seats.blue, seats.red, matchId ?? null]);
 }

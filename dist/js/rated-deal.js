@@ -1,6 +1,6 @@
 import { MAP_COUNT, normalizeMapSeed, permuteMapNumber } from './map-seed.js';
-import { chooseComputerMove } from './opponents.js?v=10';
-import { RATED_BOT_BY_ID, chooseRatedBotMove } from './rated-bots.js?v=10';
+import { chooseComputerMove } from './opponents.js?v=11';
+import { RATED_BOT_BY_ID, chooseRatedBotMove } from './rated-bots.js?v=11';
 import { otherSide } from './rules.js';
 
 export const RATED_BOARD_VERSION = 5;
@@ -26,7 +26,7 @@ export function ratedDeal(seed, boardVersion = RATED_BOARD_VERSION) {
     return { seed: code, boardVersion, difficulty, ...seats };
   }
   if (boardVersion !== RATED_BOARD_VERSION) throw new RangeError('Unknown rated board version.');
-  return { seed: code, boardVersion, difficulty: 'expert', ...seats, timed: false };
+  return { seed: code, boardVersion, difficulty: 'expert', ...seats, timed: true };
 }
 
 /** Frozen miniature deals for existing matches and their original calibration. */

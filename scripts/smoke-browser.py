@@ -140,12 +140,14 @@ def resume(page):
 
 def check_assignment(page, variant, bot):
     expect(page.locator("#rated-receipt")).to_be_visible(timeout=35_000)
-    expect(page.locator("#clock")).to_be_hidden()
+    expect(page.locator("#clock")).to_be_visible()
+    expect(page.locator("#clock-value")).to_have_text("10")
     expect(page.locator("#undo")).to_be_hidden()
     active = ledger(page)["active"]
     assert active["variant"] == variant and active["level"] == bot
     assert active["boardVersion"] == 5 and active["difficulty"] == "expert"
-    assert active["game"]["boardVersion"] == 5 and not active["game"]["timed"]
+    assert active["game"]["boardVersion"] == 5 and active["game"]["timed"]
+    assert active["game"]["deadline"] == active["startedAt"] + 12_000
     name, rating = BOTS[bot]
     expect(page.locator("#rated-match-rating")).to_have_text(f"{name} ({rating} Elo)")
     branches = rendered_branches(page)
@@ -306,6 +308,24 @@ def run_browser_test(browser, url, capture):
     expect(page.locator('[data-rated="rating"]')).to_have_text("1200")
     page.locator('[data-rated="close"]').click()
     assert page.evaluate("document.documentElement.scrollWidth <= innerWidth + 1")
+
+    # Read the actual clock across reload and let an untouched turn expire.
+    open_desk(page)
+    page.locator('[data-pool="green"]').click()
+    page.locator('[data-rated="level"]').select_option("martin")
+    page.locator('[data-rated="start"]').click()
+    expect(page.locator("#rated-receipt")).to_be_visible(timeout=35_000)
+    opening = ledger(page)["active"]
+    assert opening["firstSide"] == opening["seat"]
+    expect(page.locator("#clock-value")).to_have_text("9", timeout=6000)
+    page.reload(wait_until="networkidle")
+    assert ledger(page)["active"]["game"]["deadline"] == opening["game"]["deadline"]
+    expect(page.locator("#turn-action")).to_have_text("You ran out of time.", timeout=11_000)
+    result = ledger(page)
+    assert result["active"] is None and len(result["history"]) == 1
+    assert result["history"][0]["reason"] == "timeout" and result["pools"]["green"]["losses"] == 1
+    page.reload(wait_until="networkidle")
+    assert ledger(page) == result
 
     check_analysis_controls(page, capture)
     assert not errors, errors

@@ -209,7 +209,7 @@ function pose(frame) {
 }
 
 test('a single cut launches both actual halves, while rapid cuts, reset and reduced motion own their effects', t => {
-  const { root, motion } = surface(t);
+  const { root, motion, bounds, resize } = surface(t);
   const scheduled = new Map();
   let timer = 0;
   window.setTimeout = (run, delay) => { scheduled.set(++timer, { run, delay }); return timer; };
@@ -225,10 +225,14 @@ test('a single cut launches both actual halves, while rapid cuts, reset and redu
   const opening = board.edges.map(edge => edge.id);
   const update = (live, options) => renderer.update({ board, live, side: 'blue', ...options });
   const effects = root.descendants().find(el => el.attrs.class === 'hb-field__effects');
+  const cutMark = root.descendants().find(el => el.attrs.class === 'hb-field__cut-mark');
   try {
     update(opening);
+    assert.equal(cutMark.attrs.display, 'none');
     const base = root.descendants().find(el => el.attrs['data-edge-id'] === 'base');
     update(['base', 'right'], { cutId: 'left' });
+    assert.equal(cutMark.attrs.transform, 'translate(360 115)');
+    assert.equal(cutMark.getAttribute('display'), null);
     const halves = effects.children[0].children;
     assert.equal(halves.length, 2);
     const spins = [], kicks = [];
@@ -262,6 +266,7 @@ test('a single cut launches both actual halves, while rapid cuts, reset and redu
     update(opening, { reset: true });
     assert.equal(scheduled.size, 0);
     assert.equal(effects.children.length, 0);
+    assert.equal(cutMark.attrs.display, 'none');
     assert.ok(remaining.every(animation => animation.cancelled));
 
     update(['base', 'right'], { cutId: 'left' });
@@ -270,6 +275,17 @@ test('a single cut launches both actual halves, while rapid cuts, reset and redu
     assert.equal(effects.children.length, 0);
     assert.equal(scheduled.size, 0);
     update(['base'], { cutId: 'right' });
+    assert.equal(effects.children.length, 0);
+    assert.equal(cutMark.attrs.transform, 'translate(480 115)');
+    Object.assign(bounds, { width: 360, height: 244 });
+    resize();
+    const afterResize = cutMark.attrs.transform;
+    assert.notEqual(afterResize, 'translate(480 115)');
+    update(opening);
+    assert.equal(cutMark.attrs.display, 'none');
+    update(['base'], { reset: true, cutId: 'right' });
+    assert.equal(cutMark.attrs.transform, afterResize);
+    assert.equal(cutMark.getAttribute('display'), null);
     assert.equal(effects.children.length, 0);
   } finally {
     renderer.destroy();
@@ -347,7 +363,7 @@ test('every branch in the Expert opening can be selected at its actual drawn mid
     assert.equal(board.groundY, 314);
     assert.ok(live.length >= 82);
     const svg = root.descendants().find(el => el.tag === 'svg');
-    for (const [screenWidth, screenHeight] of [[900, 340], [750, 283], [360, 222]]) {
+    for (const [screenWidth, screenHeight] of [[900, 340], [750, 283], [360, 222], [320, 244]]) {
       Object.assign(bounds, { width: screenWidth, height: screenHeight });
       resize();
       for (const side of ['blue', 'red']) {
