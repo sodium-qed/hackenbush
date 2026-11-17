@@ -1,8 +1,8 @@
-import { analyzePosition } from './analysis-values.js?v=10';
-import { estimateDifficulty } from './difficulty.js?v=10';
-import { ratedBotMove, ratedOpeningWinner } from './rated-deal.js?v=10';
+import { analyzePosition } from './analysis-values.js?v=11';
+import { estimateDifficulty } from './difficulty.js?v=11';
+import { ratedBotMove, ratedOpeningWinner } from './rated-deal.js?v=11';
 import { cutEdge, legalMoves, otherSide } from './rules.js';
-import { inspectGraph, prepareGraph } from './strategy.js?v=10';
+import { inspectGraph, prepareGraph } from './strategy.js?v=11';
 
 const HUMAN_WIN = 1, BOT_WIN = 2;
 

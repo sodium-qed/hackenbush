@@ -111,7 +111,7 @@ function renderChart(host, records, games) {
 export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onReplay, onPractice}) {
   dialog.innerHTML = `
     <header class="rated-desk__header">
-      <div><h2 id="rated-title">Rated play</h2><p>Untimed bot matches · Saved on this device</p></div>
+      <div><h2 id="rated-title">Rated play</h2><p>Bot matches · 10 seconds per cut · Saved on this device</p></div>
       <button class="icon-button" type="button" data-rated="close" aria-label="Close rated play"><svg class="icon" aria-hidden="true"><use href="#i-close"/></svg></button>
     </header>
     <div class="rated-desk__body">
@@ -137,7 +137,7 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
             <label for="rated-seed">Map seed<input id="rated-seed" data-rated="seed" type="text" placeholder="A35D7E" required autocomplete="off" autocapitalize="characters" spellcheck="false" aria-describedby="rated-seed-help"></label>
             <button type="submit" class="secondary" data-rated="practice-start">Play unrated</button>
           </form>
-          <p id="rated-seed-help">Enter a six-digit hex seed to play this garden against the selected bot.</p>
+          <p id="rated-seed-help">Enter a six-digit hex seed to play this garden against the selected bot without a clock.</p>
         </details>
         <button class="rated-text-button" type="button" data-rated="forfeit" hidden>Resign this match</button>
       </section>
@@ -187,9 +187,9 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
     if (active) {
       const cuts = active.game.moves.length;
       field('deal-info').textContent = [variantNames[active.variant], active.family, 'Seed ' + active.seed,
-        cuts + (cuts === 1 ? ' cut played' : ' cuts played')].filter(Boolean).join(' · ');
+        cuts + (cuts === 1 ? ' cut played' : ' cuts played'), active.timed ? 'Clock running' : 'Clock starts on return'].filter(Boolean).join(' · ');
     } else {
-      field('deal-info').textContent = 'Draw a full garden, your seat and the opening player from a fresh map seed.';
+      field('deal-info').textContent = 'Study the opening for two seconds, then make each cut within ten. The clock keeps running if you leave the board.';
     }
     // A saved classic match keeps its original opponent until it is finished.
     levels.querySelector('[data-legacy]')?.remove();
@@ -228,7 +228,7 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
     const list = make('ol', 'rated-history');
     for (const row of records.slice(0, 12)) {
       const item = make('li', 'rated-history__row');
-      const outcome = row.reason === 'forfeit' ? 'Resigned' : row.won ? 'Win' : 'Loss';
+      const outcome = row.reason === 'forfeit' ? 'Resigned' : (row.won ? 'Win' : 'Loss') + (row.reason === 'timeout' ? ' on time' : '');
       const detail = make('details');
       const summary = make('summary');
       summary.append(make('strong', '', outcome + ' · ' + ratedOpponentLabel(row.level, row.bot)),

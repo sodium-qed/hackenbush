@@ -98,7 +98,7 @@ function sliceBranch(shape, from, to) {
 
 function crossbars(shape, color, halfWidth, from = 0, to = 1) {
   if (color === 'green' || !shape.length) return '';
-  const spacing = Math.min(2.15, shape.length * 0.14);
+  const spacing = Math.min(2.4, shape.length * 0.15);
   const offsets = color === 'blue' ? [-spacing, spacing] : [0];
   return offsets.map(offset => {
     const t = parameterAtLength(shape, shape.length / 2 + offset);
@@ -262,16 +262,16 @@ function addScissors() {
   const place = svgElement('g', { class: 'hb-field__scissors', 'aria-hidden': 'true', display: 'none' });
   const mark = svgElement('g', { class: 'hb-field__scissors-mark' });
   place.append(mark);
-  const blades = 'M-4.7,2.7L4.5,-10.6M4.7,2.7L-4.5,-10.6';
+  const blades = 'M-5.8,3.8Q-4.7,-1.1 -.2,-4.9L4.4,-10.6M5.8,3.8Q4.7,-1.1 .2,-4.9L-4.4,-10.6';
   mark.append(svgElement('path', { class: 'hb-field__scissor-back', d: blades }));
   mark.append(svgElement('path', { class: 'hb-field__scissor-ink', d: blades }));
   for (const sign of [-1, 1]) {
     mark.append(svgElement('ellipse', {
-      class: 'hb-field__scissor-handle', cx: sign * 5.4, cy: -12.6, rx: 2.55, ry: 3.1,
-      transform: `rotate(${sign * 24} ${sign * 5.4} -12.6)`
+      class: 'hb-field__scissor-handle', cx: sign * 5.6, cy: -12.5, rx: 2.65, ry: 3.5,
+      transform: `rotate(${sign * 26} ${sign * 5.6} -12.5)`
     }));
   }
-  mark.append(svgElement('circle', { class: 'hb-field__scissor-pin', cx: 0, cy: -3.9, r: 0.9 }));
+  mark.append(svgElement('circle', { class: 'hb-field__scissor-pin', cx: 0, cy: -4.9, r: 1.4 }));
   return place;
 }
 
@@ -305,7 +305,7 @@ export function createBoard(container, { onCut } = {}) {
     'aria-label': 'Hackenbush board', 'aria-describedby': `${prefix}-instructions`
   });
   const desc = svgElement('desc', { id: `${prefix}-instructions` });
-  desc.textContent = 'Arrow keys select an available branch. Enter or Space cuts it. Red branches carry one stripe. Blue branches carry two.';
+  desc.textContent = 'Arrow keys select an available branch. Enter or Space cuts it. Red branches carry one stripe. Blue branches carry two. A small cross marks the last cut.';
   const defs = svgElement('defs');
   const dots = svgElement('pattern', { id: `${prefix}-dots`, width: 16, height: 16, patternUnits: 'userSpaceOnUse' });
   dots.append(svgElement('circle', { class: 'hb-field__dot', cx: 8, cy: 8, r: 0.79 }));
@@ -315,12 +315,12 @@ export function createBoard(container, { onCut } = {}) {
   });
   hatching.append(svgElement('path', { class: 'hb-field__etch', d: 'M-3,7L3,0M8,4L11.5,0M13,7L19,0' }));
   const soil = svgElement('linearGradient', { id: `${prefix}-soil`, x1: 0, x2: 0, y1: 0, y2: 1 });
-  soil.append(svgElement('stop', { offset: '0%', 'stop-color': '#76855b', 'stop-opacity': 0.14 }));
-  soil.append(svgElement('stop', { offset: '100%', 'stop-color': '#76855b', 'stop-opacity': 0 }));
-  const bead = svgElement('radialGradient', { id: `${prefix}-bead`, cx: 0.36, cy: 0.3, r: 0.75 });
-  bead.append(svgElement('stop', { offset: '0%', 'stop-color': '#71876d' }));
-  bead.append(svgElement('stop', { offset: '46%', 'stop-color': '#3a503d' }));
-  bead.append(svgElement('stop', { offset: '100%', 'stop-color': '#233126' }));
+  soil.append(svgElement('stop', { offset: '0%', 'stop-color': '#8c7651', 'stop-opacity': 0.32 }));
+  soil.append(svgElement('stop', { offset: '100%', 'stop-color': '#b3976a', 'stop-opacity': 0 }));
+  const bead = svgElement('radialGradient', { id: `${prefix}-bead`, cx: 0.30, cy: 0.25, r: 0.85 });
+  bead.append(svgElement('stop', { offset: '0%', 'stop-color': '#879373' }));
+  bead.append(svgElement('stop', { offset: '36%', 'stop-color': '#445c46' }));
+  bead.append(svgElement('stop', { offset: '100%', 'stop-color': '#233f34' }));
   defs.append(dots, hatching, soil, bead);
   const grid = svgElement('rect', { x: 0, y: 0, width: '100%', height: '100%', fill: `url(#${prefix}-dots)`, 'aria-hidden': true });
   const ground = svgElement('g', { 'aria-hidden': true, class: 'hb-field__ground' });
@@ -336,9 +336,11 @@ export function createBoard(container, { onCut } = {}) {
   const sparks = svgElement('g', { class: 'hb-field__sparks', 'aria-hidden': true });
   const joints = svgElement('g', { class: 'hb-field__joints', 'aria-hidden': true });
   const effects = svgElement('g', { class: 'hb-field__effects', 'aria-hidden': true });
+  const cutMark = svgElement('g', { class: 'hb-field__cut-mark', 'aria-hidden': true, display: 'none' });
+  cutMark.append(svgElement('circle', { r: 6.2 }), svgElement('path', { d: 'M-2.3,-2.3 2.3,2.3M2.3,-2.3 -2.3,2.3' }));
   const scissors = addScissors();
   const art = createRegionArt(prefix, svgElement);
-  svg.append(desc, defs, art.defs, art.shapes, grid, ground, art.layer, shadows, effects, branches, joints, sparks, scissors);
+  svg.append(desc, defs, art.defs, art.shapes, grid, ground, art.layer, shadows, effects, cutMark, branches, joints, sparks, scissors);
   frame.append(landscape, svg);
   container.append(frame);
 
@@ -352,6 +354,7 @@ export function createBoard(container, { onCut } = {}) {
   let roving = null;
   let keyboardFocus = false;
   let press = null;
+  let lastCut = null;
   let width = WIDTH;
   let height = HEIGHT;
   let groundY = GROUND;
@@ -391,8 +394,12 @@ export function createBoard(container, { onCut } = {}) {
     art.build(next);
     for (const node of next.nodes) {
       const dot = svgElement('circle', { class: 'hb-field__joint', fill: `url(#${prefix}-bead)` });
+      const root = node.ground && svgElement('path', {
+        class: 'hb-field__root-mark', d: 'M0,2.8v6.3m0-4.1-4.7,3.3M0,7l3.9,3.2'
+      });
+      if (root) joints.append(root);
       joints.append(dot);
-      nodes.set(node.id, { ...node, dot, at: null });
+      nodes.set(node.id, { ...node, dot, root, at: null });
     }
     for (const [index, edge] of next.edges.entries()) {
       const group = svgElement('g', {
@@ -439,6 +446,7 @@ export function createBoard(container, { onCut } = {}) {
       node.at = { x: project.x(node.x), y: node.y };
       node.dot.setAttribute('cx', node.at.x);
       node.dot.setAttribute('cy', node.at.y);
+      if (node.root) node.root.setAttribute('transform', `translate(${node.at.x} ${node.at.y})`);
     }
     plantGround(margin);
     for (const edge of edges.values()) {
@@ -455,7 +463,7 @@ export function createBoard(container, { onCut } = {}) {
       edge.center = pointAt(edge.shape, middle);
       const tangent = tangentAt(edge.shape, middle);
       for (const part of [edge.hit, edge.halo, edge.keyline, edge.stem, edge.sheen, edge.shadow]) part.setAttribute('d', edge.shape.path);
-      edge.stripes.setAttribute('d', crossbars(edge.shape, edge.color, dense ? 1.5 : 1.8));
+      edge.stripes.setAttribute('d', crossbars(edge.shape, edge.color, dense ? 1.75 : 2.1));
       let angle = Math.atan2(tangent.y, tangent.x) * 180 / Math.PI;
       if (angle >= 90) angle -= 180;
       if (angle < -90) angle += 180;
@@ -527,6 +535,16 @@ export function createBoard(container, { onCut } = {}) {
     }
   }
 
+  function positionCutMark() {
+    const edge = edges.get(lastCut);
+    if (!edge) {
+      cutMark.setAttribute('display', 'none');
+      return;
+    }
+    cutMark.setAttribute('transform', `translate(${edge.center.x} ${edge.center.y})`);
+    cutMark.removeAttribute('display');
+  }
+
   function fit(force = false) {
     const box = frame.getBoundingClientRect();
     const fitted = box.width > 0 && box.height > 0 ? Math.round(box.width * height / box.height * 100) / 100 : WIDTH;
@@ -535,6 +553,7 @@ export function createBoard(container, { onCut } = {}) {
     svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
     clearEffects();
     geometry();
+    positionCutMark();
     preview();
   }
 
@@ -710,7 +729,7 @@ export function createBoard(container, { onCut } = {}) {
         const keyline = cut.keyline.cloneNode(), ink = cut.stem.cloneNode(), stripes = cut.stripes.cloneNode();
         keyline.setAttribute('d', shape.path);
         ink.setAttribute('d', shape.path);
-        stripes.setAttribute('d', crossbars(cut.shape, cut.color, dense ? 1.5 : 1.8, from, to));
+        stripes.setAttribute('d', crossbars(cut.shape, cut.color, dense ? 1.75 : 2.1, from, to));
         half.append(keyline, ink, stripes);
         if (!fallen.some(edge => edge.a === end || edge.b === end)) addLooseJoint(half, end);
         batch.append(half);
@@ -784,6 +803,7 @@ export function createBoard(container, { onCut } = {}) {
     const before = live;
     board = next;
     side = nextSide;
+    if (changed || reset) lastCut = null;
     if (changed) {
       signature = nextSignature;
       height = next.height ?? HEIGHT;
@@ -799,6 +819,7 @@ export function createBoard(container, { onCut } = {}) {
     }
     live = new Set(ids ?? next.edges.map(edge => edge.id));
     available = new Set(disable ? [] : legalMoves(board, [...live], side));
+    frame.classList.toggle('hb-field--interactive', available.size > 0);
     const hint = available.has(hintId) ? hintId : null;
     if (!available.has(hover)) hover = null;
     if (!available.has(focused)) focused = null;
@@ -806,8 +827,12 @@ export function createBoard(container, { onCut } = {}) {
     else if (!available.has(roving)) setRoving(available.values().next().value ?? null);
     if (!changed && !reset) {
       const vanished = [...before].filter(id => !live.has(id) && edges.has(id));
+      if (vanished.length) lastCut = null;
       animateRemoval(vanished, removed, cutId);
     }
+    if (edges.has(cutId) && !live.has(cutId)) lastCut = cutId;
+    if (live.has(lastCut)) lastCut = null;
+    positionCutMark();
     art.setLive(live);
     for (const [id, view] of edges) {
       const visible = live.has(id);
@@ -825,6 +850,7 @@ export function createBoard(container, { onCut } = {}) {
     for (const [id, node] of nodes) {
       const visible = incident.get(id)?.some(edge => live.has(edge.id));
       node.dot.setAttribute('display', visible ? 'inline' : 'none');
+      if (node.root) node.root.setAttribute('display', visible ? 'inline' : 'none');
     }
     if (hadFocus && (changed || !available.has(previousFocus))) {
       const target = roving ? edges.get(roving).group : svg;
@@ -946,7 +972,10 @@ export function createBoard(container, { onCut } = {}) {
   svg.addEventListener('focusin', event => {
     focused = edgeId(event.target);
     if (available.has(focused)) setRoving(focused);
-    if (event.target.matches(':focus-visible')) keyboardFocus = true;
+    if (event.target.matches(':focus-visible')) {
+      keyboardFocus = true;
+      hover = null;
+    }
     preview();
   });
   svg.addEventListener('focusout', event => {
