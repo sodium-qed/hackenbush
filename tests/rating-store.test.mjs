@@ -317,6 +317,33 @@ test('a reset while a worker is preparing, or its failure, cannot resurrect a dr
   assert.equal(store.read().issued, 0);
 });
 
+test('the draw and turn clock wait for an indefinite assessment, and closing it costs no game', async () => {
+  for (const cancel of [true, false]) {
+    const f = fixture(2), store = f.store();
+    const close = new AbortController(), play = new AbortController();
+    let solved;
+    const assessed = new Promise(resolve => { solved = resolve; });
+    const starting = store.start('green', 'noam', {indefinite: true, signal: close.signal, finishSignal: play.signal,
+      onProgress: p => { if (p.complete) solved(); }});
+    await assessed;
+    f.setTime(999_000);
+    assert.equal(store.read().active, null);
+    assert.equal(store.read().issued, 0);
+    if (cancel) {
+      close.abort();
+      assert.equal((await starting).reason, 'cancelled');
+      assert.equal(store.read().issued, 0);
+    } else {
+      play.abort();
+      const result = await starting;
+      assert.ok(result.ok);
+      assert.equal(result.active.startedAt, 999_000);
+      assert.equal(result.active.game.deadline, 999_000 + RATED_OPENING_MS + TURN_MS);
+      assert.equal(store.read().issued, 1);
+    }
+  }
+});
+
 test('storage failure, invalid data and future schemas preserve last durable data', async () => {
   const f = fixture(), store = f.store();
   f.failReads(true);

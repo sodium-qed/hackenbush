@@ -32,6 +32,7 @@ const dealKey = 'groundwork.hackenbush.map-deal.v4';
 const dailyLevelKey = 'groundwork.hackenbush.daily-level.v1';
 const sceneryKey = 'groundwork.hackenbush.scenery.v1';
 const ratedViewKey = 'groundwork.hackenbush.rated-view.v1';
+const ratedAssessmentKey = 'groundwork.hackenbush.rated-assessment.indefinite';
 const dailyDateFormat = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const colors = { green: 'Green', red: 'Red', blue: 'Blue' };
 const rules = { green: 'Green', redblue: 'Red–Blue', mixed: 'Red–Blue + green' };
@@ -39,11 +40,13 @@ const audio = createAudio({ button: $('sound-nav'), dialog: $('sound-dialog') })
 const practiceOptions = { onCut: details => audio.cut(details) };
 const guide = createGuide($('guide-dialog'), practiceOptions);
 const analyzer = createAnalyzer($('analyzer-dialog'));
-const ratings = createRatingStore({ prepareOpening: match => runRatedWorker('prepare', match),
+const ratings = createRatingStore({ prepareOpening: (match, settings) => runRatedWorker('prepare', match, 0, settings),
   chooseBot: typeof Worker === 'function' ? (match, budget) => runRatedWorker('move', match, budget) : undefined });
 const ratedDesk = createRatedDesk($('rated-dialog'), {
   read: () => ratings.read(), onStart: startRated, onForfeit: resignRated, onReset: resetRatings,
-  onReplay: reviewRated, onPractice: playGardenPractice
+  onReplay: reviewRated, onPractice: playGardenPractice,
+  readIndefinite: () => readStorage(ratedAssessmentKey) === true,
+  saveIndefinite: enabled => writeStorage(ratedAssessmentKey, enabled)
 });
 const builder = createBuilder($('builder-dialog'), { onUse: applyCustomBoard });
 createPractice($('practice-garden'), practiceOptions);
@@ -387,14 +390,19 @@ function startDailyChallenge(seed, level) {
   audio.reveal();
   activate(next, { previewEnd: Date.now() + 2000, scroll: true });
 }
-function runRatedWorker(operation, match, clockBudget = 0) {
+function runRatedWorker(operation, match, clockBudget = 0, { signal, finishSignal, indefinite, onProgress } = {}) {
   return new Promise((resolve, reject) => {
-    const worker = new Worker(new URL('./rated-worker.js?v=11', import.meta.url), { type: 'module' });
+    signal?.throwIfAborted();
+    const worker = new Worker(new URL('./rated-worker.js?v=12', import.meta.url), { type: 'module' });
     let running = false, interrupted = false;
-    let timer = setTimeout(() => stop(false), 30_000);
+    let timer = operation === 'prepare' ? null : setTimeout(() => stop(false), 30_000);
+    const finish = () => worker.postMessage({operation: 'finish-assessment'});
+    const cancel = () => { cleanUp(); reject(signal.reason); };
     function cleanUp() {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visibilityChanged);
+      signal?.removeEventListener('abort', cancel);
+      finishSignal?.removeEventListener('abort', finish);
       worker.terminate();
     }
     function stop(success, value) {
@@ -416,7 +424,8 @@ function runRatedWorker(operation, match, clockBudget = 0) {
     }
     if (clockBudget) document.addEventListener('visibilitychange', visibilityChanged);
     worker.onmessage = ({data}) => {
-      if (data.searchStarted) {
+      if (data.progress) onProgress?.(data.progress);
+      else if (data.searchStarted) {
         running = true;
         interrupted = document.hidden;
         clearTimeout(timer);
@@ -429,7 +438,10 @@ function runRatedWorker(operation, match, clockBudget = 0) {
     };
     worker.onerror = () => stop(false);
     worker.onmessageerror = () => stop(false);
-    worker.postMessage({operation, game: match, clockBudget});
+    signal?.addEventListener('abort', cancel, {once: true});
+    finishSignal?.addEventListener('abort', finish, {once: true});
+    worker.postMessage({operation, game: match, clockBudget, indefinite});
+    if (finishSignal?.aborted) finish();
   });
 }
 function ratedFailure(reason) {
@@ -452,14 +464,14 @@ function enterRated(entry, scroll = false) {
   const previewEnd = entry.timed && !match.moves.length && match.deadline !== null ? match.deadline - TURN_MS : 0;
   activate(match, {scroll, previewEnd});
 }
-async function startRated(variant, level) {
+async function startRated(variant, level, settings) {
   if (typeof Worker !== 'function') throw new Error('Rated play needs a browser with Web Worker support.');
   const dialog = $('rated-dialog');
   const controller = new AbortController();
   const cancel = () => controller.abort();
   dialog.addEventListener('close', cancel);
   let result;
-  try { result = await ratings.start(variant, level, { signal: controller.signal }); }
+  try { result = await ratings.start(variant, level, { ...settings, signal: controller.signal }); }
   finally { dialog.removeEventListener('close', cancel); }
   if (result.reason === 'cancelled') return;
   if (!result.ok) throw new Error(ratedFailure(result.reason));

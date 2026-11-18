@@ -1,11 +1,17 @@
-import { prepareRatedOpening } from './rating-opening.js?v=11';
+import { assessRatedOpening } from './rating-opening.js?v=12';
 import { ratedBotMove } from './rated-deal.js?v=11';
 
-self.onmessage = ({data}) => {
+const finishAssessment = new AbortController();
+
+self.onmessage = async ({data}) => {
   try {
     const { operation, game } = data;
     let result;
-    if (operation === 'prepare') result = prepareRatedOpening(game);
+    if (operation === 'finish-assessment') { finishAssessment.abort(); return; }
+    if (operation === 'prepare') {
+      result = await assessRatedOpening(game, { indefinite: data.indefinite, finishSignal: finishAssessment.signal,
+        onProgress: progress => self.postMessage({progress}) });
+    }
     else if (operation === 'move') {
       if (data.clockBudget) self.postMessage({ searchStarted: true });
       const start = performance.now();
