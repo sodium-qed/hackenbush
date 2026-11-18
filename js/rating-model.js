@@ -103,8 +103,7 @@ function openingParameters(game, opening, bot) {
     sd: Math.sqrt(Math.max(0, calibrationVariance)), model: 'opening-conditioned-1' };
 }
 
-/** Freeze the forecast before the first cut, including the consequences of
- * either result. Runtime-only measurements never enter the rating update. */
+/** Price either result using the opening evidence and the pre-match rating. */
 export function forecastOpening(pool, game, opening) {
   const level = game.players[game.seat === 'blue' ? 'red' : 'blue'].level;
   const bot = ratedBotSummary(game.variant, level);

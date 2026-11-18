@@ -171,6 +171,7 @@ export function createOpeningSurvey(board, live, side) {
   const graph = prepareGraph(board, live);
   const mask = (1n << BigInt(graph.edges.length)) - 1n;
   const opening = inspectGraph(graph, mask);
+  const started = performance.now();
   const topology = topologyFor(board, live, graph, opening);
   const options = optionsFor(graph, opening, side, other);
   let screened = 0, nodes = 0, nextChild = 0, child = null, childNodes = 0;
@@ -179,7 +180,9 @@ export function createOpeningSurvey(board, live, side) {
     screened = options.length;
   }
   function snapshot(winner) {
-    return { difficulty: summarize(options, side, winner, topology), screened, nodes };
+    const difficulty = summarize(options, side, winner, topology);
+    difficulty.effort = { nodes, durationMs: performance.now() - started };
+    return { difficulty, screened, nodes };
   }
   function advance(winner) {
     if (screened < options.length) {

@@ -1,5 +1,5 @@
 import { createAudio } from './audio.js';
-import { createAnalyzer } from './analyzer.js';
+import { getReplayAnalyzer } from './analyzer.js';
 import { createBuilder } from './builder.js';
 import { CUSTOM_BOARD_VERSION, readCustomBoard } from './custom-board.js';
 import { createDailyGame, dailySeed } from './daily.js';
@@ -32,21 +32,24 @@ const dealKey = 'groundwork.hackenbush.map-deal.v4';
 const dailyLevelKey = 'groundwork.hackenbush.daily-level.v1';
 const sceneryKey = 'groundwork.hackenbush.scenery.v1';
 const ratedViewKey = 'groundwork.hackenbush.rated-view.v1';
-const ratedAssessmentKey = 'groundwork.hackenbush.rated-assessment.indefinite';
 const dailyDateFormat = new Intl.DateTimeFormat('en-US', { month: 'long', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const colors = { green: 'Green', red: 'Red', blue: 'Blue' };
 const rules = { green: 'Green', redblue: 'Red–Blue', mixed: 'Red–Blue + green' };
 const audio = createAudio({ button: $('sound-nav'), dialog: $('sound-dialog') });
 const practiceOptions = { onCut: details => audio.cut(details) };
 const guide = createGuide($('guide-dialog'), practiceOptions);
-const analyzer = createAnalyzer($('analyzer-dialog'));
+const analyzer = getReplayAnalyzer();
 const ratings = createRatingStore({ prepareOpening: (match, settings) => runRatedWorker('prepare', match, 0, settings),
+  onAssessmentChange: updateAssessmentReceipt,
+  onAssessmentProgress: (id, p) => {
+    if (ratedMatch?.id === id && ratedMatch.assessmentPending) {
+      $('rated-assessment-status').textContent = 'Original opening · ' + p.positions.toLocaleString() + ' positions checked';
+    }
+  },
   chooseBot: typeof Worker === 'function' ? (match, budget) => runRatedWorker('move', match, budget) : undefined });
 const ratedDesk = createRatedDesk($('rated-dialog'), {
   read: () => ratings.read(), onStart: startRated, onForfeit: resignRated, onReset: resetRatings,
-  onReplay: reviewRated, onPractice: playGardenPractice,
-  readIndefinite: () => readStorage(ratedAssessmentKey) === true,
-  saveIndefinite: enabled => writeStorage(ratedAssessmentKey, enabled)
+  onReplay: reviewRated, onPractice: playGardenPractice
 });
 const builder = createBuilder($('builder-dialog'), { onUse: applyCustomBoard });
 createPractice($('practice-garden'), practiceOptions);
@@ -390,19 +393,17 @@ function startDailyChallenge(seed, level) {
   audio.reveal();
   activate(next, { previewEnd: Date.now() + 2000, scroll: true });
 }
-function runRatedWorker(operation, match, clockBudget = 0, { signal, finishSignal, indefinite, onProgress } = {}) {
+function runRatedWorker(operation, match, clockBudget = 0, { signal, settleWhenReady, onProgress } = {}) {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
-    const worker = new Worker(new URL('./rated-worker.js?v=12', import.meta.url), { type: 'module' });
+    const worker = new Worker(new URL('./rated-worker.js?v=13', import.meta.url), { type: 'module' });
     let running = false, interrupted = false;
     let timer = operation === 'prepare' ? null : setTimeout(() => stop(false), 30_000);
-    const finish = () => worker.postMessage({operation: 'finish-assessment'});
     const cancel = () => { cleanUp(); reject(signal.reason); };
     function cleanUp() {
       clearTimeout(timer);
       document.removeEventListener('visibilitychange', visibilityChanged);
       signal?.removeEventListener('abort', cancel);
-      finishSignal?.removeEventListener('abort', finish);
       worker.terminate();
     }
     function stop(success, value) {
@@ -424,7 +425,7 @@ function runRatedWorker(operation, match, clockBudget = 0, { signal, finishSigna
     }
     if (clockBudget) document.addEventListener('visibilitychange', visibilityChanged);
     worker.onmessage = ({data}) => {
-      if (data.progress) onProgress?.(data.progress);
+      if (data.progress) onProgress?.(data.progress, data.opening);
       else if (data.searchStarted) {
         running = true;
         interrupted = document.hidden;
@@ -439,9 +440,7 @@ function runRatedWorker(operation, match, clockBudget = 0, { signal, finishSigna
     worker.onerror = () => stop(false);
     worker.onmessageerror = () => stop(false);
     signal?.addEventListener('abort', cancel, {once: true});
-    finishSignal?.addEventListener('abort', finish, {once: true});
-    worker.postMessage({operation, game: match, clockBudget, indefinite});
-    if (finishSignal?.aborted) finish();
+    worker.postMessage({operation, game: match, clockBudget, settleWhenReady});
   });
 }
 function ratedFailure(reason) {
@@ -450,7 +449,7 @@ function ratedFailure(reason) {
     invalid: 'The rated record could not be read. Open Rated play to reset it.',
     newer: 'This saved record needs a newer version of Groundwork.',
     stale: 'Another tab changed this match. Reopen Rated play for the latest position.',
-    'prepare-failed': 'The rated worker could not prepare this garden. Retry to draw your match.',
+    'prepare-failed': 'This garden could not be dealt. Retry to draw your match.',
     'bot-failed': 'The bot calculation stopped. Retrying its move…',
     exhausted: 'This device has completed every deal in this rating pool.'
   };
@@ -464,14 +463,14 @@ function enterRated(entry, scroll = false) {
   const previewEnd = entry.timed && !match.moves.length && match.deadline !== null ? match.deadline - TURN_MS : 0;
   activate(match, {scroll, previewEnd});
 }
-async function startRated(variant, level, settings) {
+async function startRated(variant, level) {
   if (typeof Worker !== 'function') throw new Error('Rated play needs a browser with Web Worker support.');
   const dialog = $('rated-dialog');
   const controller = new AbortController();
   const cancel = () => controller.abort();
   dialog.addEventListener('close', cancel);
   let result;
-  try { result = await ratings.start(variant, level, { ...settings, signal: controller.signal }); }
+  try { result = await ratings.start(variant, level, { signal: controller.signal }); }
   finally { dialog.removeEventListener('close', cancel); }
   if (result.reason === 'cancelled') return;
   if (!result.ok) throw new Error(ratedFailure(result.reason));
@@ -487,7 +486,8 @@ async function resignRated(id) {
   watchRatedClock();
   if (ratedMatch?.id === id) enterLobby({variant: ratedMatch.variant});
   const message = result.record.reason === 'forfeit' ? 'Resignation recorded.' : 'This match had already ended.';
-  return message + ' Rating change ' + signedRating(result.record.delta) + '.';
+  return message + (result.record.assessmentPending ? ' Elo is pending while the original opening is assessed.' :
+    ' Rating change ' + signedRating(result.record.delta) + '.');
 }
 async function resetRatings() {
   const result = await ratings.reset();
@@ -512,6 +512,14 @@ function playGardenPractice({variant, level, seed, boardVersion}, scroll = true)
   if (scroll) audio.reveal();
   activate(practice, {scroll});
 }
+function updateAssessmentReceipt() {
+  if (ratedMatch) {
+    const state = ratings.read();
+    const entry = state.active?.id === ratedMatch.id ? state.active : state.history.find(row => row.id === ratedMatch.id);
+    if (entry) { ratedMatch = entry; renderRatedReceipt(); }
+  }
+  ratedDesk.refresh();
+}
 function renderRatedReceipt() {
   const receipt = $('rated-receipt');
   receipt.hidden = !ratedMatch;
@@ -521,11 +529,17 @@ function renderRatedReceipt() {
   $('rated-receipt-title').textContent = completed ? 'Rating result' : 'Rated match';
   $('rated-match-opponent').textContent = 'Opponent · ' + label;
   $('rated-match-opponent').hidden = !completed;
-  $('rated-match-rating').textContent = completed ? 'Your rating ' + Math.round(ratedMatch.before) + ' → ' +
+  $('rated-match-rating').textContent = completed && ratedMatch.assessmentPending ? 'Elo pending' : completed ? 'Your rating ' + Math.round(ratedMatch.before) + ' → ' +
     Math.round(ratedMatch.after) + ' (' + signedRating(ratedMatch.delta) + ')' :
     label;
   $('rated-match-odds').textContent = openingSummary(ratedMatch, completed);
-  $('rated-match-difficulty').textContent = 'Opening structural difficulty · ' + difficultyRange(ratedMatch.opening);
+  $('rated-match-difficulty').textContent = ratedMatch.opening.certificate === 'pending' ? '' :
+    'Opening structural difficulty · ' + difficultyRange(ratedMatch.opening);
+  const status = $('rated-assessment-status');
+  status.hidden = !ratedMatch.assessmentPending;
+  if (!status.hidden) status.textContent = ratedMatch.assessmentWork
+    ? 'Original opening · ' + ratedMatch.assessmentWork.toLocaleString() + ' positions checked'
+    : 'Evaluating the original opening in the background…';
   $('rated-practice').hidden = !completed;
 }
 function paintScenery() {
@@ -1209,8 +1223,9 @@ window.addEventListener('pageshow', refreshTime);
 window.addEventListener('storage', event => {
   if (event.key === RATING_KEY || event.key === null) {
     watchRatedClock();
-    if (ratedMatch) syncPosition();
-    ratedDesk.refresh();
+    ratings.assessPending();
+    if (ratedMatch) { syncPosition(); updateAssessmentReceipt(); }
+    else ratedDesk.refresh();
   }
   if (event.key === sceneryKey) setScenery(readStorage(sceneryKey) !== false);
   if (phase === 'ready') refreshDailyCard();
@@ -1220,3 +1235,4 @@ window.addEventListener('hashchange', loadLocation);
 setScenery(readStorage(sceneryKey) !== false);
 loadLocation();
 watchRatedClock();
+ratings.assessPending();

@@ -1,6 +1,6 @@
 import { analyzePosition, createAnalysisSession } from './analysis-values.js?v=11';
 import { recentCache } from './analysis-modes.js';
-import { createOpeningSurvey, estimateDifficulty } from './difficulty.js?v=12';
+import { createOpeningSurvey, estimateDifficulty } from './difficulty.js?v=13';
 import { ratedBotMove, ratedOpeningWinner } from './rated-deal.js?v=11';
 import { cutEdge, legalMoves, otherSide } from './rules.js';
 import { inspectGraph, prepareGraph } from './strategy.js?v=11';
@@ -253,7 +253,7 @@ function createAssessment(game) {
     const forced = choice.information === 'forced';
     const eligible = choice.information === 'skill';
     // A known policy outcome and the full tactical survey suffice for an
-    // automatic start. Further search can still settle the seat advantage
+    // first price. Further search can still settle the seat advantage
     // and the difficulty interval used by the Elo forecast.
     const complete = forced || (eligible && !!difficulty.winner && difficulty.lower === difficulty.upper);
     return { ready: complete || (eligible && screened === difficulty.legalMoves), complete,
@@ -276,49 +276,38 @@ function createAssessment(game) {
   function result() {
     const { nodes, cacheHits, durationMs, searchEdges, status, ...certificate } = proof;
     return { ...difficultyFields(difficulty), edges: live.length, perfectPlay: { ...certificate, winner: difficulty.winner },
-      ...choice, ...(choice.information === 'unresolved' ? { certificate: 'assessment-stopped' } : {}) };
+      ...choice };
   }
   return { advance, progress, result };
 }
 
-/** The live deal uses cumulative work with no elapsed-time cutoff. Finish
- * accepts the latest evidence; cancelling the draw discards it altogether. */
-export async function assessRatedOpening(game, { indefinite = false, signal, finishSignal, onProgress } = {}) {
+// The deal can be issued before any proof or playout has run.
+export function pendingOpening(game) {
+  const moves = legalMoves(game.board, game.live, game.firstSide).length;
+  return { winner: null, model: 'Opening assessment pending', score: 50, lower: 0, upper: 100, coverage: 0,
+    legalMoves: moves, winningMoves: 0, losingMoves: 0, unknownMoves: moves, edges: game.live.length,
+    information: 'unresolved', forcedWinner: null, certificate: 'pending', searchNodes: 0 };
+}
+
+/** Always use the untouched deal. Publish the first scoreable result promptly,
+ * then refine it during play. Work caps apply per slice, never per game. */
+export async function assessRatedOpening(game, { signal, onProgress, settleWhenReady = false } = {}) {
   signal?.throwIfAborted();
-  if (game.boardVersion !== 5) return prepareRatedOpening(game);
+  if (game.moves.length || game.side !== game.firstSide) throw new Error('Assessment needs the original position.');
   const session = createAssessment(game);
-  let progress = session.progress();
-  onProgress?.(progress);
-  let lastReport = performance.now();
-  while (!finishSignal?.aborted && !(indefinite ? progress.complete : progress.ready)) {
-    // Within a slice use deterministic node allowances. The clock only
-    // determines when control returns to the worker message queue.
+  let progress = session.progress(), lastReport = performance.now();
+  onProgress?.(progress, session.result());
+  while (!progress.complete && !(settleWhenReady && progress.ready)) {
     await new Promise(resolve => setTimeout(resolve, 0));
     signal?.throwIfAborted();
-    if (finishSignal?.aborted) break;
-    const deadline = performance.now() + 45;
-    do {
-      progress = session.advance();
-    } while (!(indefinite ? progress.complete : progress.ready) && performance.now() < deadline);
-    if (performance.now() - lastReport >= 250 || progress.complete || (!indefinite && progress.ready)) {
-      onProgress?.(progress);
+    const deadline = performance.now() + 35;
+    const wasReady = progress.ready;
+    do { progress = session.advance(); }
+    while (!progress.complete && progress.ready === wasReady && performance.now() < deadline);
+    if (progress.complete || progress.ready !== wasReady || performance.now() - lastReport >= 500) {
+      onProgress?.(progress, session.result());
       lastReport = performance.now();
     }
   }
-  const result = session.result();
-  if (indefinite && finishSignal && !finishSignal.aborted && progress.complete) {
-    // The player controls the start. A fully assessed garden waits idle.
-    await new Promise(resolve => {
-      function wake() {
-        signal?.removeEventListener('abort', wake);
-        finishSignal.removeEventListener('abort', wake);
-        resolve();
-      }
-      signal?.addEventListener('abort', wake);
-      finishSignal.addEventListener('abort', wake);
-      if (signal?.aborted || finishSignal.aborted) wake();
-    });
-  }
-  signal?.throwIfAborted();
-  return result;
+  return session.result();
 }
