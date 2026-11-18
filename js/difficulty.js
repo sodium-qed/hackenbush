@@ -1,4 +1,4 @@
-import { analyzePosition, dyadicChange } from './analysis-values.js?v=11';
+import { analyzePosition, createAnalysisSession, dyadicChange } from './analysis-values.js?v=11';
 import { legalMoves, otherSide } from './rules.js';
 import { inspectGraph, prepareGraph } from './strategy.js?v=11';
 
@@ -161,6 +161,58 @@ function summarize(options, side, rootWinner, topology) {
     tactics: { instantWins, immediateRefutations, concealedLosses,
       uncheckedReplies: options.filter(option => option.refuted === null).length,
       uniformRisk: [uniformLow, uniformHigh], screenedRisk: [screenedLow, screenedHigh] } };
+}
+
+/** Progressive survey for a generated Red–Blue rated opening. Screen every
+ * legal cut first, then retain a child proof across slices until its winner
+ * is known. Only one deep child search needs memory at a time. */
+export function createOpeningSurvey(board, live, side) {
+  const other = otherSide(side);
+  const graph = prepareGraph(board, live);
+  const mask = (1n << BigInt(graph.edges.length)) - 1n;
+  const opening = inspectGraph(graph, mask);
+  const topology = topologyFor(board, live, graph, opening);
+  const options = optionsFor(graph, opening, side, other);
+  let screened = 0, nodes = 0, nextChild = 0, child = null, childNodes = 0;
+  if (!(mask & ~graph.incident[0])) {
+    priceGroundOptions(graph, options, side, other, 'redblue');
+    screened = options.length;
+  }
+  function snapshot(winner) {
+    return { difficulty: summarize(options, side, winner, topology), screened, nodes };
+  }
+  function advance(winner) {
+    if (screened < options.length) {
+      const option = options[screened++];
+      nodes++;
+      if (!option.immediate) {
+        const shape = inspectGraph(graph, option.next);
+        option.refuted = hasRefutation(graph, option.next, shape, side, other);
+        if (option.refuted) option.winner = other;
+        if (!option.winner) {
+          const proof = analyzePosition(board, idsFor(graph, option.next), other, 'redblue',
+            { budgetMs: Infinity, nodeLimit: 4, stats: true });
+          if (proof.winner) option.winner = proof.winner;
+          nodes += proof.nodes;
+        }
+      }
+    } else {
+      while (nextChild < options.length && options[nextChild].winner) { nextChild++; child = null; }
+      const option = options[nextChild];
+      if (option) {
+        if (!child) {
+          child = createAnalysisSession(board, idsFor(graph, option.next), other, 'redblue', { maxEntries: 1024 });
+          childNodes = 0;
+        }
+        const proof = child.refine({ budgetMs: Infinity, nodeLimit: 64 });
+        nodes += proof.nodes - childNodes;
+        childNodes = proof.nodes;
+        if (proof.winner) option.winner = proof.winner;
+      }
+    }
+    return snapshot(winner);
+  }
+  return { snapshot, advance };
 }
 
 /** Measure the current seat's structural decision difficulty on standing edges.

@@ -5,7 +5,7 @@ import { isRatedBot, RATED_BOARD_VERSION, ratedBotMove, ratedDeal } from './rate
 import { createGame, expireTurn, playCut, restoreGame, saveData, startTurnClock, TURN_MS } from './session.js';
 import { initialEdges, legalMoves, otherSide } from './rules.js';
 import { forecastOpening, isProvisional, LEGACY_RATING_SHIFT, newPool, ratedBotSummary } from './rating-model.js';
-import { prepareRatedOpening } from './rating-opening.js';
+import { assessRatedOpening, prepareRatedOpening } from './rating-opening.js';
 
 export { prepareRatedOpening, ratedBotSummary };
 export const RATING_KEY = 'groundwork.hackenbush.ratings';
@@ -216,7 +216,7 @@ export function createRatingStore(options = {}) {
   const dbApi = 'indexedDB' in options ? options.indexedDB : browserValue('indexedDB');
   const entropy = options.entropy ?? browserValue('crypto');
   const clock = options.clock ?? Date.now;
-  const prepare = options.prepareOpening ?? prepareRatedOpening;
+  const prepare = options.prepareOpening ?? assessRatedOpening;
   const chooseBot = options.chooseBot ?? localBotDecision;
 
   // Validating an old receipt means replaying its legal moves on the original
@@ -268,8 +268,10 @@ export function createRatingStore(options = {}) {
     return success(state, extra);
   }
 
-  async function start(variant, level, { signal } = {}) {
+  async function start(variant, level, settings = {}) {
+    const { signal } = settings;
     const before = read();
+    if (signal?.aborted) return failed('cancelled', before);
     if (before.status !== 'ok') return failed(before.status, before);
     if (!variants.includes(variant) || (!isRatedBot(level) && !(before.active && level === before.active.level))) return failed('ineligible', before);
     if (before.active) return resume(before.active.id);
@@ -279,13 +281,13 @@ export function createRatingStore(options = {}) {
     try {
       draw = nextMapSeed(before.stream, entropy);
       game = createRatedGame(variant, level, draw.seed, randomId(entropy));
-      opening = await prepare(game);
+      opening = await prepare(game, settings);
       if (!validOpening(opening, game) || opening.edges !== game.live.length ||
           opening.legalMoves !== legalMoves(game.board, game.live, game.firstSide).length) return failed('prepare-failed', before);
       forecast = forecastOpening(before.pools[variant], game, opening);
       bot = ratedBotSummary(variant, level);
       if (!validMoment(forecast.win) || !validMoment(forecast.loss) || !validBot(bot, level)) return failed('prepare-failed', before);
-    } catch { return failed('prepare-failed', before); }
+    } catch { return failed(signal?.aborted ? 'cancelled' : 'prepare-failed', before); }
     return locked(() => {
       const state = read();
       if (state.status !== 'ok') return failed(state.status, state);

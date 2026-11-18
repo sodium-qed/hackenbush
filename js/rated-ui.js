@@ -52,7 +52,9 @@ export function openingSummary({opening, seat, expected}, completed) {
   } else {
     if (Number.isFinite(expected)) lines.push('Your estimated opening win chance was ' + winPercent(expected) + '.');
     if (opening.information === 'unresolved') {
-      lines.push('The search could not establish whether both results were possible against this bot. No rating change.');
+      lines.push(opening.certificate === 'assessment-stopped'
+        ? 'Play began before rating eligibility was settled. This match carries no rating change.'
+        : 'The search could not establish whether both results were possible against this bot. No rating change.');
     } else if (completed) {
       lines.push('Both a win and a loss were possible against this bot.');
     }
@@ -108,7 +110,7 @@ function renderChart(host, records, games) {
   host.replaceChildren(svg);
 }
 
-export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onReplay, onPractice}) {
+export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onReplay, onPractice, readIndefinite, saveIndefinite}) {
   dialog.innerHTML = `
     <header class="rated-desk__header">
       <div><h2 id="rated-title">Rated play</h2><p>Bot matches · 10 seconds per cut · Saved on this device</p></div>
@@ -131,6 +133,15 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
           <button type="button" class="primary" data-rated="start">Draw rated match</button>
         </div>
         <p class="rated-bot-description" id="rated-bot-description"><span data-rated="bot"></span> <a data-rated="bot-source" target="_blank" rel="noopener">Chess.com profile</a></p>
+        <div class="rated-assessment-setting" data-rated="assessment-setting">
+          <label><input type="checkbox" data-rated="indefinite" aria-describedby="assessment-help">Keep assessing indefinitely</label>
+          <p id="assessment-help" data-rated="assessment-help"></p>
+        </div>
+        <div class="rated-assessment" data-rated="assessment" hidden>
+          <p data-rated="assessment-status" role="status"></p>
+          <p data-rated="assessment-count"></p>
+          <button type="button" class="secondary" data-rated="finish-assessment">Play now</button>
+        </div>
         <details class="rated-seed" data-rated="practice-seed">
           <summary>Practice a seed</summary>
           <form class="rated-deal__controls" data-rated="practice-form" novalidate>
@@ -157,7 +168,7 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
       </section>
       <details class="rated-help"><summary>How ratings work</summary>
         <p>Your Green and Red–Blue ratings each start at ${INITIAL_RATING}. The named bots use their published Chess.com Elo as an initial estimate of their Hackenbush strength. Each plays its own Hackenbush strategy.</p>
-        <p>Your rating can change when both a win and a loss are possible against the assigned bot. A forced result or an inconclusive check gives zero change. RD measures uncertainty about your rating. The chart shades one RD on either side of your estimate.</p>
+        <p>Your rating can change when both a win and a loss are possible against the assigned bot. The opening assessment checks this before the clock starts. If every line has the same outcome, the rating change is zero. RD measures uncertainty about your rating. The chart shades one RD on either side of your estimate.</p>
       </details>
       <button class="rated-text-button rated-reset" data-rated="reset" type="button">Reset rated history</button>
     </div>`;
@@ -171,6 +182,35 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
   let variant = 'redblue';
   let busy = false;
   let confirmation = null;
+  let assessment = null;
+  const indefinite = field('indefinite');
+  indefinite.checked = readIndefinite();
+  const assessmentHelp = () => {
+    field('assessment-help').textContent = indefinite.checked
+      ? 'Refine the Elo forecast until you choose Play now. The clock waits.'
+      : 'The match starts automatically once its rating check is settled.';
+  };
+  assessmentHelp();
+  indefinite.addEventListener('change', () => {
+    saveIndefinite(indefinite.checked);
+    assessmentHelp();
+  });
+
+  function displayProgress(progress) {
+    const status = field('assessment-status');
+    let message = 'Checking whether this match can affect Elo…';
+    if (progress.information === 'forced') message = 'Forced outcome proved. This match carries no rating change.';
+    else if (progress.complete) message = 'Assessment complete. The clock starts when play begins.';
+    else if (progress.ready) message = 'Rating eligibility settled. Refining the Elo forecast…';
+    else if (progress.information === 'skill') message = 'Both results are possible. Checking the opening cuts…';
+    if (status.textContent !== message) status.textContent = message;
+    const counts = [progress.positions.toLocaleString() + ' positions checked',
+      progress.screened + ' / ' + progress.legalMoves + ' opening cuts screened'];
+    if (progress.information === 'unresolved') {
+      counts.push(progress.outcomes + ' / 2 outcomes witnessed', 'Starting now leaves Elo unchanged.');
+    } else if (progress.information === 'skill') counts.push('Opening difficulty ' + difficultyRange(progress));
+    field('assessment-count').textContent = counts.join(' · ');
+  }
 
   function refresh() {
     const state = read();
@@ -210,7 +250,10 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
     field('seed').disabled = busy;
     field('practice-start').disabled = busy;
     field('start').disabled = busy || state.status !== 'ok';
-    field('start').textContent = busy ? 'Working…' : active ? 'Resume rated match' : 'Draw rated match';
+    field('start').textContent = assessment ? 'Assessing…' : busy ? 'Working…' : active ? 'Resume rated match' : 'Draw rated match';
+    field('assessment-setting').hidden = !!active;
+    indefinite.disabled = busy;
+    field('assessment').hidden = !assessment;
     field('forfeit').hidden = !active;
     field('forfeit').disabled = busy;
     field('reset').disabled = busy || state.status === 'newer' || state.status === 'unavailable';
@@ -321,7 +364,21 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
   });
   field('start').addEventListener('click', () => {
     dismiss();
-    run(() => onStart(variant, field('level').value), 'Preparing your match…');
+    if (read().active) { run(() => onStart(variant, levels.value), 'Opening match…'); return; }
+    assessment = new AbortController();
+    field('finish-assessment').disabled = false;
+    field('assessment-status').textContent = 'Preparing the opening assessment…';
+    field('assessment-count').textContent = '';
+    run(async () => {
+      try {
+        await onStart(variant, levels.value, { indefinite: indefinite.checked,
+          finishSignal: assessment.signal, onProgress: displayProgress });
+      } finally { assessment = null; }
+    }, '');
+  });
+  field('finish-assessment').addEventListener('click', () => {
+    field('finish-assessment').disabled = true;
+    assessment?.abort();
   });
   field('forfeit').addEventListener('click', () => ask('forfeit'));
   field('reset').addEventListener('click', () => ask('reset'));
@@ -341,6 +398,7 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
   dialog.addEventListener('close', dismiss);
   return {
     open(selected) {
+      if (!busy) { indefinite.checked = readIndefinite(); assessmentHelp(); }
       variant = read().active?.variant ?? (Object.hasOwn(variantNames, selected) ? selected : variant);
       field('notice').textContent = '';
       refresh();
