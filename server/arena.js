@@ -1,3 +1,4 @@
+import { liveOpening } from './opening-assessment.js';
 import { freshSeed, generateBoard } from '../dist/js/generator.js';
 import { ratedDeal } from '../dist/js/rated-deal.js';
 import { cutEdge, initialEdges, otherSide, winner } from '../dist/js/rules.js';
@@ -86,6 +87,7 @@ function stateRow({ db, id, now }) {
 }
 
 function matchView(row, player) {
+  const opening = row.rated && (row.opening_trials != null || !row.winner) ? liveOpening(row) : null;
   return {
     id: row.id, variant: row.variant, rated: Boolean(row.rated),
     seed: row.seed, boardVersion: row.board_version, difficulty: 'expert',
@@ -94,6 +96,8 @@ function matchView(row, player) {
       blue: { name: row.blue_name, rating: row.blue_rating },
       red: { name: row.red_name, rating: row.red_rating },
     },
+    openingAssessment: opening ? { trials: opening.trials, ready: opening.ready,
+      ...(opening.ready ? { blueDelta: opening.delta } : {}) } : null,
     moves: JSON.parse(row.moves), live: JSON.parse(row.live), side: row.side, version: row.version,
     startedAt: row.started_at, turnStartsAt: row.turn_starts_at, deadline: row.deadline,
     result: row.winner && {
@@ -115,16 +119,9 @@ function view(ctx, row) {
 
 // Match ratings are frozen when the seats are assigned. A terminal transaction
 // writes the two absolute post-game ratings, so replaying it cannot add Elo twice.
-function blueDelta(match, winningSide) {
-  if (!match.rated) return 0;
-  const difference = (match.blue_rating - match.red_rating) * (winningSide === 'blue' ? 1 : -1);
-  const points = Math.round(32 / (1 + 10 ** (difference / 400)));
-  return winningSide === 'blue' ? points : -points;
-}
-
-async function finish(ctx, match, winningSide, update) {
+async function finish(ctx, match, winningSide, update, opening) {
   if (!match.rated) return update.run();
-  const delta = blueDelta(match, winningSide);
+  const delta = opening.delta[winningSide];
   const column = match.variant === 'green' ? 'green_rating' : 'redblue_rating';
   const ratings = ctx.db.prepare(`
     UPDATE arena_players
@@ -141,12 +138,13 @@ async function finishWithoutCut(ctx, match, winningSide, reason, decisionTime) {
   // cut. A timeout applies only to the exact turn whose deadline was observed.
   const guard = reason === 'timeout' ? 'version = ? AND deadline <= ?' : 'deadline > ?';
   const args = reason === 'timeout' ? [match.version, decisionTime] : [decisionTime];
+  const opening = match.rated ? liveOpening(match, Infinity) : null;
   const update = ctx.db.prepare(`
     UPDATE arena_matches SET winner = ?, reason = ?, blue_delta = ?, version = version + 1,
-                             turn_starts_at = NULL, deadline = NULL
+                             turn_starts_at = NULL, deadline = NULL, opening_trials = ?, opening_blue_wins = ?
     WHERE id = ? AND winner IS NULL AND ${guard}
-  `).bind(winningSide, reason, blueDelta(match, winningSide), match.id, ...args);
-  await finish(ctx, match, winningSide, update);
+  `).bind(winningSide, reason, opening?.delta[winningSide] ?? 0, opening?.trials ?? null, opening?.wins ?? 0, match.id, ...args);
+  await finish(ctx, match, winningSide, update, opening);
 }
 
 async function expireIfDue(ctx, match) {
@@ -197,10 +195,10 @@ async function pair(ctx, variant, ownTicket, peer, code = null) {
     INSERT INTO arena_matches (
       id, variant, rated, room_code, seed, board_version, first_side,
       blue_id, red_id, blue_name, red_name, blue_rating, red_rating,
-      live, side, started_at, turn_starts_at, deadline
+      live, side, started_at, turn_starts_at, deadline, opening_trials
     )
     SELECT ?, ?, ?, ?, ?, ?, ?, b.id, r.id, b.name, r.name, b.${column}, r.${column},
-           ?, ?, ?, ?, ?
+           ?, ?, ?, ?, ?, ?
     FROM arena_players b, arena_players r
     WHERE b.id = ? AND r.id = ? AND b.id <> r.id
       AND (b.match_id IS NULL OR EXISTS (SELECT 1 FROM arena_matches WHERE id = b.match_id AND winner IS NOT NULL))
@@ -208,7 +206,7 @@ async function pair(ctx, variant, ownTicket, peer, code = null) {
       AND EXISTS (SELECT 1 FROM arena_waiting WHERE player_id = ? AND ticket = ? AND expires_at > ?)
       AND ${ownGuard}
   `).bind(id, variant, code === null ? 1 : 0, code, deal.seed, deal.boardVersion, deal.firstSide,
-    live, deal.firstSide, time, start, start + TURN_MS, blueId, redId,
+    live, deal.firstSide, time, start, start + TURN_MS, code === null ? 0 : null, blueId, redId,
     peer.player_id, peer.ticket, time, ...ownArgs);
   const seat = ctx.db.prepare(`
     UPDATE arena_players SET match_id = ? WHERE id IN (?, ?) AND EXISTS (SELECT 1 FROM arena_matches WHERE id = ?)
@@ -217,10 +215,45 @@ async function pair(ctx, variant, ownTicket, peer, code = null) {
     DELETE FROM arena_waiting WHERE player_id IN (?, ?) AND EXISTS (SELECT 1 FROM arena_matches WHERE id = ?)
   `).bind(blueId, redId, id);
   await ctx.db.batch([claim, seat, clear]);
+  if (code === null) scheduleLiveOpening(ctx, id);
+}
+
+// Progress is independent of turns and guarded by its own counter. Simultaneous
+// polls or another isolate can only write the same deterministic prefix.
+async function advanceLiveOpening(ctx, row) {
+  if (!row.rated || row.winner || liveOpening(row).ready) return row;
+  const next = liveOpening(row, 8);
+  const update = await ctx.db.prepare(`
+    UPDATE arena_matches SET opening_trials = ?, opening_blue_wins = ?
+    WHERE id = ? AND winner IS NULL AND coalesce(opening_trials, 0) < ?
+  `).bind(next.trials, next.wins, row.id, next.trials).run();
+  if (!update.meta?.changes) return stateRow(ctx);
+  return { ...row, opening_trials: next.trials, opening_blue_wins: next.wins };
+}
+
+const workingOpenings = new Map();
+function scheduleLiveOpening(ctx, id) {
+  if (!ctx.execution || workingOpenings.has(id)) return;
+  const work = (async () => {
+    for (;;) {
+      const row = await ctx.db.prepare('SELECT * FROM arena_matches WHERE id = ?').bind(id).first();
+      if (!row?.rated || row.winner || liveOpening(row).ready) return;
+      await advanceLiveOpening(ctx, row);
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  })().catch(() => { /* A later poll resumes the saved prefix. */ }).finally(() => workingOpenings.delete(id));
+  workingOpenings.set(id, work);
+  ctx.execution.waitUntil(work);
 }
 
 async function poll(ctx, row) {
-  if (row.waiting_kind !== 'queue') return view(ctx, row);
+  if (row.waiting_kind !== 'queue') {
+    if (ctx.execution && row.rated && !row.winner && !liveOpening(row).ready) {
+      scheduleLiveOpening(ctx, row.id);
+      return view(ctx, row);
+    }
+    return view(ctx, await advanceLiveOpening(ctx, row));
+  }
   const time = ctx.now();
   if (row.waiting_until - time < QUEUE_LEASE - 10_000) {
     await ctx.db.prepare(`
@@ -339,13 +372,15 @@ async function move(ctx, match, data) {
   }
   const moves = JSON.parse(match.moves);
   moves.push(edgeId);
+  const opening = victor && match.rated ? liveOpening(match, Infinity) : null;
   const update = ctx.db.prepare(`
     UPDATE arena_matches SET moves = ?, live = ?, side = ?, version = version + 1,
-      turn_starts_at = ?, deadline = ?, winner = ?, reason = ?, blue_delta = ?
+      turn_starts_at = ?, deadline = ?, winner = ?, reason = ?, blue_delta = ?,
+      opening_trials = coalesce(?, opening_trials), opening_blue_wins = coalesce(?, opening_blue_wins)
     WHERE id = ? AND winner IS NULL AND side = ? AND version = ? AND turn_starts_at <= ? AND deadline > ?
   `).bind(JSON.stringify(moves), JSON.stringify(change.live), next, victor ? null : time, victor ? null : time + TURN_MS,
-    victor, victor ? 'no-moves' : null, victor ? blueDelta(match, victor) : 0, match.id, seat, version, time, time);
-  const result = victor ? await finish(ctx, match, victor, update) : await update.run();
+    victor, victor ? 'no-moves' : null, opening?.delta[victor] ?? 0, opening?.trials ?? null, opening?.wins ?? null, match.id, seat, version, time, time);
+  const result = victor ? await finish(ctx, match, victor, update, opening) : await update.run();
   if (!result.meta?.changes) {
     const actual = await participantMatch(ctx, match.id);
     if (!previousCut(actual, seat, version, edgeId)) conflict('stale-version', 'The board has changed. Refresh the current turn.');
@@ -417,11 +452,11 @@ async function dispatch(request, ctx) {
 }
 
 /** HTTP entry point shared by the production worker and the local SQLite server. */
-export async function handleArena(request, env) {
+export async function handleArena(request, env, execution) {
   const now = typeof env?.now === 'function' ? env.now : Date.now;
   try {
     if (!env?.DB) throw new ArenaError(503, 'unavailable', 'The arena database is unavailable.');
-    const result = await dispatch(request, { db: env.DB, now, id: null });
+    const result = await dispatch(request, { db: env.DB, now, id: null, execution });
     return response(result, now());
   } catch (error) {
     if (error instanceof ArenaError) return response({ error: error.message, code: error.code }, now(), error.status);

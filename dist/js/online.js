@@ -1,3 +1,4 @@
+import {getReplayAnalyzer} from './analyzer.js';
 import {createBoard} from './board.js';
 import {generateBoard} from './generator.js';
 import {renderLandscape} from './landscape.js';
@@ -356,6 +357,18 @@ function refresh() {
     fields.confirm.hidden = !confirming || !!match.result;
     fields.resign.hidden = confirming || !!match.result;
     fields.resign.disabled = fields['confirm-resign'].disabled = fields.done.disabled = locked;
+    fields['opening-assessment'].hidden = !match.openingAssessment;
+    if (match.openingAssessment) {
+      const assessment = match.openingAssessment;
+      let details = (assessment.ready ? 'Original opening assessed' : 'Assessing the original opening') +
+        ' · ' + assessment.trials + ' reference games checked';
+      if (assessment.blueDelta && !match.result) {
+        const sign = match.seat === 'blue' ? 1 : -1;
+        const win = sign * assessment.blueDelta[match.seat], loss = sign * assessment.blueDelta[otherSide(match.seat)];
+        details += ' · Win +' + win + ' Elo / Loss −' + Math.abs(loss) + ' Elo';
+      }
+      put(fields['opening-assessment'], details);
+    }
     if (match.result) showResult(match);
     put(fields.branches, match.live.length + (match.live.length === 1 ? ' branch' : ' branches'));
     put(fields['board-meta'], variants[match.variant] + ' · Seed ' + match.seed);
@@ -498,6 +511,13 @@ fields.resign.addEventListener('click', () => { confirming = true; refresh(); fi
 fields['keep-playing'].addEventListener('click', () => { confirming = false; refresh(); fields.resign.focus(); });
 fields['confirm-resign'].addEventListener('click', () => {
   if (state.match && !state.match.result) act('resign', '/api/matches/' + state.match.id + '/resign', 'POST', {});
+});
+fields.analyze.addEventListener('click', () => {
+  const match = state.match;
+  if (!match?.result || !board || boardMatch !== match.id) return;
+  getReplayAnalyzer().open({ ...match, board, victor: match.result.winner,
+    timedOut: match.result.reason === 'timeout' ? otherSide(match.result.winner) : null,
+    resigned: match.result.reason === 'resign' });
 });
 fields.done.addEventListener('click', async () => {
   if (state.match?.result && await act('done', '/api/matches/' + state.match.id, 'DELETE')) title.focus();

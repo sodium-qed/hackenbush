@@ -11,7 +11,7 @@ const apiHeaders = {
   'X-Content-Type-Options': 'nosniff'
 };
 
-export async function serveGame(request, env, serveAsset) {
+export async function serveGame(request, env, serveAsset, execution) {
   const { pathname } = new URL(request.url);
   if (pathname.startsWith('/api/')) {
     if (request.method === 'OPTIONS') return new Response(null, {status: 204, headers: apiHeaders});
@@ -21,7 +21,7 @@ export async function serveGame(request, env, serveAsset) {
         await env.DB.prepare('SELECT 1 AS ok').first();
         result = Response.json({status: 'ok'});
       } else {
-        result = await handleArena(request, env);
+        result = await handleArena(request, env, execution);
       }
     } catch (error) {
       console.error('Groundwork API error', error?.message);

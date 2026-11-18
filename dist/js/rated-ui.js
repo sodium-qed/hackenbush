@@ -40,7 +40,8 @@ export function ratedOpponentLabel(level, snapshot) {
   return label + ' (' + rating + (profile ? ' Elo)' : ' Groundwork)');
 }
 
-export function openingSummary({opening, seat, expected}, completed) {
+export function openingSummary({opening, seat, expected, forecast, assessmentPending}, completed) {
+  if (assessmentPending && opening.information === 'unresolved') return 'Assessing the original opening. Elo is pending.';
   const lines = [];
   if (completed) {
     lines.push(opening.winner ? 'Perfect play favored ' + (opening.winner === seat ? 'you.' : 'the bot.') :
@@ -50,9 +51,13 @@ export function openingSummary({opening, seat, expected}, completed) {
     const outcome = opening.forcedWinner === seat ? 'a win' : 'a loss';
     lines.push('Against this bot, every sequence of your legal cuts from the opening gives you ' + outcome + '. No rating change.');
   } else {
-    if (Number.isFinite(expected)) lines.push('Your estimated opening win chance was ' + winPercent(expected) + '.');
+    if (Number.isFinite(expected)) lines.push('Your estimated opening win chance ' + (completed ? 'was ' : 'is ') + winPercent(expected) + '.');
+    if (!completed && forecast?.rated) lines.push('Projected Elo · Win ' +
+      Math.round(forecast.win.rating) + ' / Loss ' + Math.round(forecast.loss.rating) + '.');
     if (opening.information === 'unresolved') {
-      lines.push('The search could not establish whether both results were possible against this bot. No rating change.');
+      lines.push(opening.certificate === 'assessment-stopped'
+        ? 'Play began before rating eligibility was settled. This match carries no rating change.'
+        : 'The search could not establish whether both results were possible against this bot. No rating change.');
     } else if (completed) {
       lines.push('Both a win and a loss were possible against this bot.');
     }
@@ -157,7 +162,7 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
       </section>
       <details class="rated-help"><summary>How ratings work</summary>
         <p>Your Green and Red–Blue ratings each start at ${INITIAL_RATING}. The named bots use their published Chess.com Elo as an initial estimate of their Hackenbush strength. Each plays its own Hackenbush strategy.</p>
-        <p>Your rating can change when both a win and a loss are possible against the assigned bot. A forced result or an inconclusive check gives zero change. RD measures uncertainty about your rating. The chart shades one RD on either side of your estimate.</p>
+        <p>Your rating can change when both a win and a loss are possible against the assigned bot. The opening assessment runs automatically on the original garden while the match is played. If every line has the same outcome, the rating change is zero. RD measures uncertainty about your rating. The chart shades one RD on either side of your estimate.</p>
       </details>
       <button class="rated-text-button rated-reset" data-rated="reset" type="button">Reset rated history</button>
     </div>`;
@@ -171,7 +176,6 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
   let variant = 'redblue';
   let busy = false;
   let confirmation = null;
-
   function refresh() {
     const state = read();
     const pool = state.status === 'ok' ? state.pools[variant] : null;
@@ -210,7 +214,7 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
     field('seed').disabled = busy;
     field('practice-start').disabled = busy;
     field('start').disabled = busy || state.status !== 'ok';
-    field('start').textContent = busy ? 'Working…' : active ? 'Resume rated match' : 'Draw rated match';
+    field('start').textContent = busy ? 'Opening…' : active ? 'Resume rated match' : 'Draw rated match';
     field('forfeit').hidden = !active;
     field('forfeit').disabled = busy;
     field('reset').disabled = busy || state.status === 'newer' || state.status === 'unavailable';
@@ -233,13 +237,13 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
       const summary = make('summary');
       summary.append(make('strong', '', outcome + ' · ' + ratedOpponentLabel(row.level, row.bot)),
         make('small', '', [dateFormat.format(new Date(row.endedAt)), row.family, 'Seed ' + row.seed,
-          row.rated ? '' : 'no rating change'].filter(Boolean).join(' · ')));
+          row.assessmentPending ? 'Elo pending' : row.rated ? '' : 'no rating change'].filter(Boolean).join(' · ')));
       detail.append(summary,
-        make('p', '', 'Rating ' + Math.round(row.before) + ' → ' + Math.round(row.after) +
+        make('p', '', row.assessmentPending ? 'Calculating the opening’s effect on Elo.' : 'Rating ' + Math.round(row.before) + ' → ' + Math.round(row.after) +
           ' · RD ' + Math.round(row.rdBefore) + ' → ' + Math.round(row.rdAfter) + '.'),
         make('p', '', openingSummary(row, true)),
         make('p', '', 'Opening structural difficulty · ' + difficultyRange(row.opening) + '.'));
-      const change = make('span', 'rated-history__delta', signedRating(row.delta));
+      const change = make('span', 'rated-history__delta', row.assessmentPending ? 'Pending' : signedRating(row.delta));
       change.title = Math.round(row.before) + ' to ' + Math.round(row.after);
       const actions = make('div', 'rated-history__actions');
       const practice = make('button', 'rated-review', 'Practice');
@@ -321,7 +325,7 @@ export function createRatedDesk(dialog, {read, onStart, onForfeit, onReset, onRe
   });
   field('start').addEventListener('click', () => {
     dismiss();
-    run(() => onStart(variant, field('level').value), 'Preparing your match…');
+    run(() => onStart(variant, levels.value), 'Opening match…');
   });
   field('forfeit').addEventListener('click', () => ask('forfeit'));
   field('reset').addEventListener('click', () => ask('reset'));

@@ -9,15 +9,16 @@ import {
 } from '../dist/js/online-session.js';
 import { cutEdge, initialEdges, legalMoves, otherSide } from '../dist/js/rules.js';
 import { serveGame } from '../server/http.js';
+import { liveOpening } from '../server/opening-assessment.js';
 import { openArenaDB } from '../server/local-db.js';
 
 // Bridge the production fetch client to the Worker route using standard HTTP requests and responses.
-function openArena(t, persistent = false) {
+function openArena(t, persistent = false, execution) {
   const directory = persistent ? mkdtempSync(join(tmpdir(), 'hackenbush-online-')) : null;
   const filename = directory ? join(directory, 'arena.sqlite') : ':memory:';
   let now = Date.UTC(2026, 0, 1);
   const env = { DB: openArenaDB(filename), now: () => now };
-  t.mock.method(globalThis, 'fetch', (url, options) => serveGame(new Request(url, options), env, () => null));
+  t.mock.method(globalThis, 'fetch', (url, options) => serveGame(new Request(url, options), env, () => null, execution));
   t.after(() => {
     env.DB.close();
     if (directory) rmSync(directory, { recursive: true, force: true });
@@ -65,6 +66,11 @@ function bothSeats(first, firstMatch, second, secondMatch) {
   assert.deepEqual(firstMatch.players, secondMatch.players);
   assert.deepEqual(firstMatch.live, secondMatch.live);
   return { [firstMatch.seat]: first, [secondMatch.seat]: second };
+}
+
+function originalPrice(match) {
+  return liveOpening({ seed: match.seed, variant: match.variant, board_version: match.boardVersion,
+    first_side: match.firstSide, red_rating: match.players.red.rating, blue_rating: match.players.blue.rating }, Infinity);
 }
 
 const move = (client, match, edgeId, statuses) => client.post(`/matches/${match.id}/move`, {
@@ -119,6 +125,7 @@ test('a private invitation and its typed code reach the same game, with authorit
   const opening = matched.match;
   const seats = bothSeats(host, opening, visitor, joined.match);
   assert.equal(opening.rated, false);
+  assert.equal(opening.openingAssessment, null);
   assert.equal(opening.version, 0);
   assert.equal(opening.side, opening.firstSide);
   assert.equal(opening.deadline - opening.turnStartsAt, 10_000);
@@ -167,6 +174,8 @@ test('ranked players finish the same garden, settle Elo once, and reload after a
   assert.equal((await otherRules.state()).queue.variant, 'redblue');
   let match = matched.match;
   assert.equal(match.rated, true);
+  const price = originalPrice(match);
+  assert.ok(match.openingAssessment.trials < price.trials);
   const board = generateBoard(match.seed, match.variant, match.difficulty, match.boardVersion);
   let lastSide;
   while (!match.result) {
@@ -181,12 +190,17 @@ test('ranked players finish the same garden, settle Elo once, and reload after a
     if (before.moves.length === 0) {
       arena.restart();
       const resumed = await arena.client(seats[lastSide].token).state();
-      assert.deepEqual(resumed.match, match);
+      const { openingAssessment, ...position } = resumed.match;
+      const { openingAssessment: previous, ...beforeReconnect } = match;
+      assert.deepEqual(position, beforeReconnect);
+      assert.ok(openingAssessment.trials >= previous.trials);
+      assert.equal(resumed.match.deadline, match.deadline);
     }
   }
   assert.equal(match.result.reason, 'no-moves');
   assert.equal(match.result.winner, lastSide);
-  assert.deepEqual(match.result.delta, { [lastSide]: 16, [otherSide(lastSide)]: -16 });
+  assert.deepEqual(match.openingAssessment, { trials: price.trials, ready: true, blueDelta: price.delta });
+  assert.deepEqual(match.result.delta, { blue: price.delta[lastSide], red: -price.delta[lastSide] });
 
   await Promise.all([first, second].map(client => client.post(`/matches/${match.id}/resign`, {})));
   arena.restart();
@@ -211,17 +225,22 @@ test('a server deadline survives reload and simultaneous observations settle a r
   assert.equal(running.match.deadline, match.deadline);
   assert.deepEqual(running.profile.ratings, { green: 1200, redblue: 1200 });
   arena.setTime(match.deadline);
+  const price = originalPrice(match);
+  const deltaBlue = price.delta[otherSide(match.side)];
+  const deltas = { blue: deltaBlue, red: -deltaBlue };
   const views = await Promise.all([first.state(), second.state(), reloaded.state()]);
   for (const view of views) {
     const { result, seat } = view.match;
     assert.equal(result.reason, 'timeout');
     assert.equal(result.winner, otherSide(match.side));
     assert.deepEqual(view.match.moves, []);
-    assert.deepEqual(view.profile.ratings, { green: 1200, redblue: seat === match.side ? 1184 : 1216 });
+    assert.deepEqual(result.delta, deltas);
+    assert.deepEqual(view.match.openingAssessment, { trials: price.trials, ready: true, blueDelta: price.delta });
+    assert.deepEqual(view.profile.ratings, { green: 1200, redblue: 1200 + deltas[seat] });
   }
   const board = generateBoard(match.seed, match.variant, match.difficulty, match.boardVersion);
   await move(reloaded, match, legalMoves(board, match.live, match.side)[0], [409]);
-  assert.deepEqual((await reloaded.state()).profile.ratings, { green: 1200, redblue: 1184 });
+  assert.deepEqual((await reloaded.state()).profile.ratings, { green: 1200, redblue: 1200 + deltas[match.side] });
 });
 
 test('the ranked queue prefers closer Elo and widens the range as players wait', async t => {
@@ -274,4 +293,43 @@ test('canceled and expired tickets cannot match; a room admits one concurrent gu
   const contenders = await Promise.all([b.state(), c.state()]);
   assert.equal(contenders.filter(item => item.match?.id === owner.match.id).length, 1);
   assert.equal(contenders.filter(item => item.match === null).length, 1);
+});
+
+test('the ranked server assesses the original without polling and both devices get the same price', async t => {
+  const work = [];
+  const arena = openArena(t, false, { waitUntil(task) { work.push(task); } });
+  const [a, b] = await Promise.all(['Grove', 'Reed'].map(arena.guest));
+  await a.post('/queue', { variant: 'redblue' });
+  const { match } = await b.post('/queue', { variant: 'redblue' });
+  const seats = { [match.seat]: b, [otherSide(match.seat)]: a };
+  const board = generateBoard(match.seed, match.variant, match.difficulty, match.boardVersion);
+  const [edge] = legalMoves(board, match.live, match.side);
+  arena.setTime(match.turnStartsAt);
+  const cut = await move(seats[match.side], match, edge);
+  assert.deepEqual(cut.match.moves, [edge]);
+  assert.ok(work.length > 0);
+  await Promise.all(work);
+  const original = originalPrice(match), views = await Promise.all([a.state(), b.state()]);
+  for (const { match: current } of views) {
+    assert.deepEqual(current.openingAssessment, { ready: true, trials: original.trials, blueDelta: original.delta });
+    assert.deepEqual(current.moves, [edge]);
+    assert.equal(current.deadline, cut.match.deadline);
+  }
+  const ended = await seats.red.post(`/matches/${match.id}/resign`, {});
+  assert.equal(ended.match.result.delta.blue, original.delta.blue);
+});
+
+test('restarting reference trials preserves their opening-conditioned award across unrelated move histories', () => {
+  const row = { seed: 'A35D7E', variant: 'redblue', first_side: 'red', board_version: 5, blue_rating: 1200, red_rating: 1200 };
+  const start = liveOpening(row, 7), all = liveOpening(row, Infinity);
+  assert.equal(start.ready, false);
+  assert.equal(start.trials, 7);
+  assert.ok(all.ready && all.trials > start.trials && all.trials <= 128);
+  const resumed = liveOpening({ ...row, opening_trials: start.trials, opening_blue_wins: start.wins,
+    side: 'blue', live: [], moves: ['e1', 'e2'] }, Infinity);
+  assert.deepEqual(resumed, all);
+  const exactAward = wins => Math.round(32 / (1 + 10 ** ((80 * (2 * wins / 128 - 1)) / 400)));
+  assert.equal(all.delta.blue, exactAward(all.wins));
+  assert.equal(all.delta.blue, exactAward(all.wins + 128 - all.trials));
+  assert.notEqual(all.delta.blue, 16);
 });

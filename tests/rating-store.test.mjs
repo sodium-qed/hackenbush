@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRatedGame, createRatingStore, HISTORY_PER_VARIANT, prepareRatedOpening, ratedClockEvent, RATED_OPENING_MS, RATING_KEY } from '../dist/js/rating.js';
+import { assessRatedOpening } from '../dist/js/rating-opening.js';
+import { forecastOpening, newPool } from '../dist/js/rating-model.js';
 import { BOT_CALIBRATION } from '../dist/js/bot-calibration.js';
 import { playCut, restoreGame, saveData, startTurnClock, TURN_MS } from '../dist/js/session.js';
 import { legalMoves } from '../dist/js/rules.js';
@@ -21,13 +23,27 @@ function fixture(word = 0) {
   let pending = Promise.resolve();
   const locks = { request(_name, operation) { const next = pending.then(operation); pending = next.catch(() => {}); return next; } };
   const setTime = value => { time = value; };
-  const store = (extras = {}) => ({ ...createRatingStore({ storage: { ...storage }, entropy, locks, clock: () => time, ...extras }), setTime });
+  const prepareOpening = (game, settings) => {
+    const first = prepareRatedOpening(game);
+    return first.information === 'unresolved' ? assessRatedOpening(game, { ...settings, settleWhenReady: true }) : first;
+  };
+  const store = (extras = {}) => ({ ...createRatingStore({ storage: { ...storage }, entropy, locks, clock: () => time, prepareOpening, ...extras }), setTime });
   return { store, values, setTime, failReads(v) { readFails = v; }, failWrites(v) { writeFails = v; } };
+}
+
+async function waitFor(check) {
+  const until = Date.now() + 10_000;
+  while (!check()) {
+    assert.ok(Date.now() < until, 'assessment did not reach the expected state');
+    await new Promise(resolve => setTimeout(resolve, 3));
+  }
 }
 
 async function start(store, variant = 'green', level = 'nelson') {
   const result = await store.start(variant, level);
   assert.equal(result.ok, true, result.reason);
+  store.assessPending();
+  await waitFor(() => !store.read().active.assessmentPending);
   const game = restoreGame(result.active.game, 0);
   store.setTime(game.deadline - TURN_MS);
   return game;
@@ -263,6 +279,8 @@ test('concurrent starts and divergent continuations retain only the first durabl
   assert.equal(one.ok, true);
   assert.equal(two.reason, 'stale');
   assert.deepEqual(two.state.active.game.moves, left.moves);
+  a.assessPending();
+  await waitFor(() => !a.read().active.assessmentPending);
   const [r1, r2] = await Promise.all([a.forfeit(game.matchId), b.forfeit(game.matchId)]);
   assert.deepEqual(r1.record, r2.record);
   assert.equal(r1.record.reason, 'forfeit');
@@ -299,22 +317,93 @@ test('seed sequence outlives bounded history and reset prevents stale completion
   assert.equal((await store.checkpoint(step(stale))).reason, 'ineligible');
 });
 
-test('a reset while a worker is preparing, or its failure, cannot resurrect a draw', async () => {
+test('a delayed opening worker cannot resurrect a reset game or block an issued draw', async () => {
   const f = fixture();
   let release;
-  const wait = new Promise(resolve => { release = resolve; });
-  const store = f.store({ prepareOpening: async g => { await wait; return prepareRatedOpening(g); } });
-  const starting = store.start('green', 'nelson');
-  await f.store().reset();
+  const store = f.store({ prepareOpening: game => new Promise(resolve => { release = () => resolve(prepareRatedOpening(game)); }) });
+  const closed = new AbortController();
+  closed.abort();
+  assert.equal((await store.start('green', 'martin', { signal: closed.signal })).reason, 'cancelled');
+  const result = await store.start('green', 'martin');
+  assert.ok(result.ok && result.active.assessmentPending);
+  store.assessPending();
+  await waitFor(() => release);
+  await store.reset();
   release();
-  assert.equal((await starting).reason, 'stale');
+  await new Promise(resolve => setTimeout(resolve, 5));
   assert.equal(store.read().active, null);
-  const brokenWorker = f.store({ prepareOpening: () => { throw Error('worker unavailable'); } });
-  assert.equal((await brokenWorker.start('green', 'nelson')).reason, 'prepare-failed');
-  const controller = new AbortController();
-  const closedDesk = f.store({ prepareOpening: game => { controller.abort(); return prepareRatedOpening(game); } });
-  assert.equal((await closedDesk.start('green', 'martin', { signal: controller.signal })).reason, 'cancelled');
   assert.equal(store.read().issued, 0);
+});
+
+test('cuts, clocks and a reloaded worker all use the immutable original deal', async () => {
+  const f = fixture();
+  const jobs = [];
+  const worker = (game, options) => new Promise(resolve => jobs.push({ game, resolve, options }));
+  const store = f.store({ prepareOpening: worker });
+  const { active } = await store.start('green', 'martin');
+  const initial = restoreGame(active.game, 0);
+  assert.equal(active.game.deadline, active.startedAt + RATED_OPENING_MS + TURN_MS);
+  assert.equal(active.opening.certificate, 'pending');
+  store.assessPending();
+  await waitFor(() => jobs.length === 1);
+  f.setTime(initial.deadline - TURN_MS);
+  const played = await store.checkpoint(step(initial));
+  assert.equal(played.active.game.moves.length, 1);
+  assert.equal(played.active.game.deadline, initial.deadline);
+  const reopened = f.store({ prepareOpening: worker });
+  assert.deepEqual((await reopened.resume(active.id)).active.game.moves, played.active.game.moves);
+  reopened.assessPending();
+  await waitFor(() => jobs.length === 2);
+  for (const { game, options } of jobs) {
+    assert.deepEqual(game.moves, []);
+    assert.deepEqual(game.live, initial.live);
+    assert.equal(game.seed, initial.seed);
+    assert.equal(game.side, initial.firstSide);
+    assert.equal(options.settleWhenReady, false);
+  }
+  const evidence = prepareRatedOpening(initial);
+  jobs[1].resolve(evidence);
+  await waitFor(() => !store.read().active.assessmentPending);
+  jobs[0].resolve(evidence);
+  const settled = store.read().active;
+  assert.deepEqual(settled.game.moves, played.active.game.moves);
+  assert.deepEqual(settled.opening, evidence);
+  assert.equal(store.read().pools.green.games, 0);
+});
+
+test('late original evidence updates intervening receipts in order and counts each game once', async () => {
+  const f = fixture(), jobs = new Map();
+  const store = f.store({ prepareOpening: (game, options) => new Promise(resolve => jobs.set(game.matchId, { game, options, resolve })) });
+  const { active: first } = await store.start('green', 'martin');
+  store.assessPending();
+  await waitFor(() => jobs.has(first.id));
+  const pending = await store.forfeit(first.id);
+  assert.equal(pending.record.assessmentPending, true);
+  const { active: second } = await store.start('green', 'martin');
+  store.assessPending();
+  await waitFor(() => jobs.has(second.id));
+  const price = job => prepareRatedOpening(job.game);
+  const a = price(jobs.get(first.id)), b = price(jobs.get(second.id));
+  assert.equal(a.information, 'skill');
+  assert.equal(b.information, 'skill');
+  jobs.get(second.id).resolve(b);
+  await waitFor(() => !store.read().active.assessmentPending);
+  await store.forfeit(second.id);
+  const { active: third } = await store.start('green', 'martin');
+  jobs.get(first.id).resolve(a);
+  await waitFor(() => store.read().history.every(row => !row.assessmentPending));
+  const state = store.read(), one = forecastOpening(newPool(), first.game, a).loss;
+  const two = forecastOpening(one, second.game, b).loss;
+  assert.equal(state.history[1].after, one.rating);
+  assert.equal(state.history[0].before, one.rating);
+  assert.equal(state.history[0].after, two.rating);
+  assert.equal(state.pools.green.rating, two.rating);
+  assert.equal(state.pools.green.rd, two.rd);
+  assert.deepEqual([state.pools.green.games, state.pools.green.ratedGames, state.pools.green.losses], [2, 2, 2]);
+  assert.equal(state.active.id, third.id);
+  assert.deepEqual(state.active.forecast, forecastOpening(two, third.game, third.opening));
+  assert.deepEqual((await store.forfeit(first.id)).record, state.history[1]);
+  await store.reset();
 });
 
 test('storage failure, invalid data and future schemas preserve last durable data', async () => {
@@ -380,7 +469,7 @@ for (const version of [1, 2]) test(`v${version} profiles rebase once, retain rep
   f.values.set(RATING_KEY, raw);
   const state = store.read();
   assert.equal(state.status, 'ok');
-  assert.equal(state.version, 4);
+  assert.equal(state.version, 5);
   assert.equal(f.values.get(RATING_KEY), raw);
   assert.equal(state.pools.green.rating, 1200);
   assert.equal(state.pools.redblue.rating, oldRecord.after + 200);
@@ -411,7 +500,7 @@ for (const version of [1, 2]) test(`v${version} profiles rebase once, retain rep
   assert.equal(f.values.get(RATING_KEY), migrated);
   f.failWrites(false);
   assert.ok((await store.checkpoint(reply)).ok);
-  assert.equal(JSON.parse(f.values.get(RATING_KEY)).version, 4);
+  assert.equal(JSON.parse(f.values.get(RATING_KEY)).version, 5);
   const final = await playUntilLast(store, reply);
   const settled = await store.finish(final);
   assert.ok(settled.ok);

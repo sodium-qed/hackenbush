@@ -19,7 +19,7 @@
   <link rel="stylesheet" href="./audio.css?v=11">
   <link rel="stylesheet" href="./builder.css?v=11">
   <link rel="stylesheet" href="./analyzer.css?v=11">
-  <link rel="stylesheet" href="./rated.css?v=11">
+  <link rel="stylesheet" href="./rated.css?v=13">
   <link rel="stylesheet" href="./arena-theme.css?v=11">
   <link rel="stylesheet" href="./online.css?v=11">
 </head>
@@ -239,7 +239,7 @@
         </section>
         <section class="panel rated-card rated-receipt" id="rated-receipt" aria-labelledby="rated-receipt-title" hidden>
           <div class="rated-card__heading"><h2 id="rated-receipt-title">Rated match</h2><svg class="icon" aria-hidden="true"><use href="#i-chart"/></svg></div>
-          <p id="rated-match-rating"></p><p id="rated-match-opponent" hidden></p><p id="rated-match-odds"></p><p id="rated-match-difficulty"></p>
+          <p id="rated-match-rating"></p><p id="rated-match-opponent" hidden></p><p id="rated-assessment-status" hidden></p><p id="rated-match-odds"></p><p id="rated-match-difficulty"></p>
           <button id="rated-practice" class="secondary" type="button" hidden>Practice this garden</button>
           <button id="match-ratings" class="secondary" type="button" aria-haspopup="dialog">Rating history<svg class="icon" aria-hidden="true"><use href="#i-arrow"/></svg></button>
         </section>
@@ -273,12 +273,12 @@
     {
       "imports": {
         "./js/analysis-dyadics.js": "./js/analysis-dyadics.js?v=11",
-        "./js/analysis-modes.js": "./js/analysis-modes.js?v=11",
+        "./js/analysis-modes.js": "./js/analysis-modes.js?v=13",
         "./js/analysis-reductions.js": "./js/analysis-reductions.js?v=11",
         "./js/analysis-symmetry.js": "./js/analysis-symmetry.js?v=11",
         "./js/analysis-values.js": "./js/analysis-values.js?v=11",
-        "./js/analysis-worker.js": "./js/analysis-worker.js?v=11",
-        "./js/analyzer.js": "./js/analyzer.js?v=11",
+        "./js/analysis-worker.js": "./js/analysis-worker.js?v=13",
+        "./js/analyzer.js": "./js/analyzer.js?v=13",
         "./js/audio.js": "./js/audio.js?v=11",
         "./js/board.js": "./js/board.js?v=11",
         "./js/bot-calibration.js": "./js/bot-calibration.js?v=11",
@@ -286,7 +286,7 @@
         "./js/custom-board.js": "./js/custom-board.js?v=11",
         "./js/daily-progress.js": "./js/daily-progress.js?v=11",
         "./js/daily.js": "./js/daily.js?v=11",
-        "./js/difficulty.js": "./js/difficulty.js?v=11",
+        "./js/difficulty.js": "./js/difficulty.js?v=13",
         "./js/draw.js": "./js/draw.js?v=11",
         "./js/garden-layouts.js": "./js/garden-layouts.js?v=11",
         "./js/generator.js": "./js/generator.js?v=11",
@@ -301,18 +301,18 @@
         "./js/maps/water.js": "./js/maps/water.js?v=11",
         "./js/maps/woodland.js": "./js/maps/woodland.js?v=11",
         "./js/online-session.js": "./js/online-session.js?v=11",
-        "./js/online-view.js": "./js/online-view.js?v=11",
+        "./js/online-view.js": "./js/online-view.js?v=13",
         "./js/opponents.js": "./js/opponents.js?v=11",
         "./js/players.js": "./js/players.js?v=11",
         "./js/practice.js": "./js/practice.js?v=11",
         "./js/preview.js": "./js/preview.js?v=11",
         "./js/rated-bots.js": "./js/rated-bots.js?v=11",
         "./js/rated-deal.js": "./js/rated-deal.js?v=11",
-        "./js/rated-ui.js": "./js/rated-ui.js?v=11",
-        "./js/rated-worker.js": "./js/rated-worker.js?v=11",
+        "./js/rated-ui.js": "./js/rated-ui.js?v=13",
+        "./js/rated-worker.js": "./js/rated-worker.js?v=13",
         "./js/rating-model.js": "./js/rating-model.js?v=11",
-        "./js/rating-opening.js": "./js/rating-opening.js?v=11",
-        "./js/rating.js": "./js/rating.js?v=11",
+        "./js/rating-opening.js": "./js/rating-opening.js?v=13",
+        "./js/rating.js": "./js/rating.js?v=13",
         "./js/region-art.js": "./js/region-art.js?v=11",
         "./js/regions.js": "./js/regions.js?v=11",
         "./js/rules.js": "./js/rules.js?v=11",
@@ -325,7 +325,7 @@
       }
     }
   </script>
-  <script type="module" src="./js/online.js?v=11"></script>
-  <script type="module" src="./js/app.js?v=11"></script>
+  <script type="module" src="./js/online.js?v=13"></script>
+  <script type="module" src="./js/app.js?v=13"></script>
 </body>
 </html>

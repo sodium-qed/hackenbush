@@ -18,6 +18,8 @@ const host = option('--host', process.env.HOST || '127.0.0.1');
 const databasePath = process.env.ARENA_DB || resolve(root, '.local/arena.sqlite');
 if (databasePath !== ':memory:') await mkdir(dirname(databasePath), {recursive: true});
 const DB = openArenaDB(databasePath);
+const background = new Set();
+const execution = { waitUntil(task) { background.add(task); task.finally(() => background.delete(task)); } };
 
 async function serveAsset(path, request) {
   let decoded;
@@ -51,7 +53,7 @@ const server = createServer(async (incoming, outgoing) => {
       method: incoming.method, headers: incoming.headers,
       body: parts.length && !['GET', 'HEAD'].includes(incoming.method) ? Buffer.concat(parts) : undefined
     });
-    const response = await serveGame(request, {DB}, serveAsset);
+    const response = await serveGame(request, {DB}, serveAsset, execution);
     outgoing.writeHead(response.status, Object.fromEntries(response.headers));
     outgoing.end(Buffer.from(await response.arrayBuffer()));
   } catch (error) {
@@ -61,4 +63,4 @@ const server = createServer(async (incoming, outgoing) => {
   }
 });
 server.listen(port, host, () => console.log('Groundwork listening at http://' + host + ':' + server.address().port));
-for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.close(() => DB.close()));
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => server.close(async () => { await Promise.allSettled([...background]); DB.close(); }));

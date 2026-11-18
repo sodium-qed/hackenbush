@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ratedBotMove, ratedDeal } from '../dist/js/rated-deal.js';
-import { assessOutcomeChoice, prepareRatedOpening } from '../dist/js/rating-opening.js';
+import { assessOutcomeChoice, assessRatedOpening, prepareRatedOpening } from '../dist/js/rating-opening.js';
+import { forecastOpening, newPool } from '../dist/js/rating-model.js';
 import { cutEdge, legalMoves, otherSide, winner } from '../dist/js/rules.js';
 import { createGame } from '../dist/js/session.js';
+import { makeBoard } from './helpers/hackenbush-oracle.mjs';
+import { smallKnot } from './helpers/analyzer-positions.mjs';
 
 function gameFor(seed, variant, level) {
   const deal = ratedDeal(seed);
@@ -103,4 +106,60 @@ test('full-garden proofs and witnesses replay independently of the clock and amb
   let tick = 0;
   t.mock.method(performance, 'now', () => ++tick * 1000);
   assert.deepEqual(prepareRatedOpening(game), original);
+});
+
+test('automatic assessment continues an inconclusive deal and prices its actual result', async () => {
+  const game = gameFor('01CAFE', 'redblue', 'isabel');
+  assert.equal(prepareRatedOpening(game).information, 'unresolved');
+  const updates = [];
+  const opening = await assessRatedOpening(game, { settleWhenReady: true, onProgress: progress => updates.push(progress) });
+  assert.equal(opening.information, 'skill');
+  assert.ok(opening.searchNodes > 480);
+  replayWitnesses(game, opening);
+  assert.ok(updates.at(-1).ready);
+  assert.ok(updates.every((p, i) => !i || p.positions >= updates[i - 1].positions));
+  const pool = newPool(), forecast = forecastOpening(pool, game, opening);
+  assert.ok(forecast.rated && forecast.win.rating > pool.rating && forecast.loss.rating < pool.rating);
+});
+
+test('only exhausting the fixed policy tree certifies a one-outcome garden', async () => {
+  const board = makeBoard([[0, 1, 'blue'], [1, 2, 'red']]);
+  const game = { boardVersion: 5, variant: 'redblue', board, live: ['e0', 'e1'], seed: '000000',
+    seat: 'blue', firstSide: 'blue', moves: [], side: 'blue', players: {blue: {kind: 'human'}, red: {kind: 'computer', level: 'martin'}} };
+  assert.equal(assessOutcomeChoice(game, 'blue').information, 'unresolved');
+  const opening = await assessRatedOpening(game);
+  assert.equal(opening.information, 'forced');
+  assert.equal(opening.certificate, 'policy-tree');
+  assert.equal(opening.forcedWinner, 'blue');
+  replayWitnesses(game, opening);
+});
+
+test('automatic work stops at a settled opening and abandoned jobs can be canceled', async () => {
+  const game = gameFor('A35D7F', 'green', 'noam');
+  const progress = [];
+  const result = await assessRatedOpening(game, { onProgress: p => progress.push(p) });
+  assert.equal(result.certificate, 'perfect-green-policy');
+  assert.ok(progress.at(-1).complete);
+  const control = new AbortController();
+  const unfinished = gameFor('01CAFE', 'redblue', 'isabel');
+  await assert.rejects(assessRatedOpening(unfinished, {
+    signal: control.signal, onProgress: () => control.abort()
+  }), { name: 'AbortError' });
+  await assert.rejects(assessRatedOpening({ ...unfinished, moves: ['e0'] }), /original position/);
+});
+
+test('automatic work continues to refine a playable opening after the first scoreable estimate', async () => {
+  const board = smallKnot();
+  const game = { ...gameFor('A35D7E', 'redblue', 'martin'), board, live: board.edges.map(edge => edge.id) };
+  const automatic = await assessRatedOpening(game, { settleWhenReady: true });
+  const refined = await assessRatedOpening(game);
+  assert.equal(automatic.information, 'skill');
+  assert.ok(automatic.lower < automatic.upper);
+  assert.equal(refined.lower, refined.upper);
+  assert.ok(refined.lower >= automatic.lower && refined.upper <= automatic.upper);
+  const pool = newPool();
+  const before = forecastOpening(pool, game, automatic), after = forecastOpening(pool, game, refined);
+  assert.ok(after.transferSd < before.transferSd);
+  assert.notEqual(after.win.rating, before.win.rating);
+  assert.notEqual(after.loss.rating, before.loss.rating);
 });
