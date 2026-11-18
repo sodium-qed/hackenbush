@@ -117,6 +117,7 @@ export function mountOnlineDialog(dialog) {
         <div class="ol-result" data-online="result" hidden>
           <span class="ol-result-mark">${icon('trophy')}</span>
           <div><h3 data-online="result-title" role="status" tabindex="-1"></h3><p data-online="result-reason"></p><strong data-online="result-rating"></strong></div>
+          <button type="button" class="ol-secondary" data-online="analyze">Analyze game</button>
           <button type="button" class="ol-primary" data-online="done">Back to lobby ${icon('arrow')}</button>
         </div>
         <div class="ol-field">
@@ -126,6 +127,7 @@ export function mountOnlineDialog(dialog) {
           <div class="ol-field-foot"><span data-online="board-meta"></span>
             <button type="button" class="ol-link-button" data-online="zoom" aria-pressed="false">${icon('zoom')} Zoom board</button></div>
         </div>
+        <p class="ol-intro" data-online="opening-assessment" hidden></p>
         <div class="ol-game-foot" data-online="game-foot"><span data-online="cut-count"></span>
           <button type="button" class="ol-link-button" data-online="resign">Resign match</button></div>
         <div class="ol-confirm" data-online="confirm" hidden>

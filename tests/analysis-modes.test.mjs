@@ -4,6 +4,7 @@ import { Worker } from 'node:worker_threads';
 import { analysisModes, intersectProof, recentCache } from '../dist/js/analysis-modes.js';
 import { cachedDailyWinner, dailyOpening } from '../dist/js/daily.js';
 import { generateBoard } from '../dist/js/generator.js';
+import { smallKnot } from './helpers/analyzer-positions.mjs';
 import { initialEdges } from '../dist/js/rules.js';
 
 function startWorker(t) {
@@ -150,4 +151,24 @@ test('Research can stop between slices and an exact position can replace it on t
   const cancelledAt = events.findIndex(event => event.id === 10 && event.type === 'cancelled');
   assert.ok(cancelledAt >= 0);
   assert.ok(events.slice(cancelledAt + 1).every(event => event.id !== 10));
+});
+
+test('Indefinite can stop, resume beyond the Research budget, and finish the opening cuts', { timeout: 12000 }, async t => {
+  const worker = startWorker(t), board = smallKnot();
+  const position = { key: 'knot/blue', index: 0, live: initialEdges(board), side: 'blue', mode: 'indefinite', assessCuts: true };
+  const partial = await request(worker, 20, board, position, update => {
+    if (update.phase === 'searching') worker.postMessage({ type: 'cancel', id: 20 });
+  });
+  const checkpoint = partial[0];
+  assert.ok(checkpoint && !checkpoint.result.exact);
+  const alreadySpent = { ...checkpoint.result, durationMs: analysisModes.research.budgetMs + 1 };
+  const resumed = await request(worker, 21, board, { ...position, key: 'restored/knot',
+    cached: { result: alreadySpent } });
+  const last = resumed.at(-1);
+  assert.equal(last.phase, 'finished');
+  assert.equal(last.reason, 'exact');
+  assert.equal(last.difficulty.unknownMoves, 0);
+  assert.equal(last.difficulty.coverage, 1);
+  assert.equal(last.difficultyRank, analysisModes.indefinite.rank);
+  assert.ok(last.result.durationMs >= alreadySpent.durationMs);
 });

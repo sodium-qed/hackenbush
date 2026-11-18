@@ -5,14 +5,14 @@ import { isRatedBot, RATED_BOARD_VERSION, ratedBotMove, ratedDeal } from './rate
 import { createGame, expireTurn, playCut, restoreGame, saveData, startTurnClock, TURN_MS } from './session.js';
 import { initialEdges, legalMoves, otherSide } from './rules.js';
 import { forecastOpening, isProvisional, LEGACY_RATING_SHIFT, newPool, ratedBotSummary } from './rating-model.js';
-import { assessRatedOpening, prepareRatedOpening } from './rating-opening.js';
+import { assessRatedOpening, pendingOpening, prepareRatedOpening } from './rating-opening.js';
 
 export { prepareRatedOpening, ratedBotSummary };
 export const RATING_KEY = 'groundwork.hackenbush.ratings';
 export const HISTORY_PER_VARIANT = 40;
 export const RATED_OPENING_MS = 2000;
 const BOT_DELAY_MS = 700;
-const FORMAT = 4;
+const FORMAT = 5;
 const variants = ['green', 'redblue'];
 const sides = ['blue', 'red'];
 const sameRealmWrites = new WeakMap();
@@ -49,7 +49,7 @@ function validPool(pool, shift) {
 }
 
 function validOpening(o, { boardVersion, variant }) {
-  return o && (sides.includes(o.winner) || (boardVersion === 5 && variant === 'redblue' && o.winner === null)) &&
+  return o && (sides.includes(o.winner) || (boardVersion === 5 && o.winner === null && (variant === 'redblue' || o.certificate === 'pending'))) &&
     ['skill', 'forced', 'unresolved'].includes(o.information) &&
     (o.information === 'forced' ? sides.includes(o.forcedWinner) : o.forcedWinner === null) &&
     typeof o.model === 'string' && typeof o.certificate === 'string' && safeCount(o.searchNodes) &&
@@ -75,7 +75,8 @@ function sameAssignment(a, game) {
 function validAssignment(a, inspectSession) {
   if (!a || !validId(a.id) || !variants.includes(a.variant) || !validPolicy(a.boardVersion, a.level) || typeof a.timed !== 'boolean' ||
       typeof a.seed !== 'string' || !/^[0-9A-F]{6}$/.test(a.seed) || !sides.includes(a.seat) || !sides.includes(a.firstSide) ||
-      !validOpening(a.opening, a) || !validBot(a.bot, a.level) || !inRange(a.expected, 0, 1) ||
+      (a.assessmentPending !== undefined && (typeof a.assessmentPending !== 'boolean' || !safeCount(a.assessmentWork) ||
+        typeof a.assessmentReady !== 'boolean')) || !validOpening(a.opening, a) || !validBot(a.bot, a.level) || !inRange(a.expected, 0, 1) ||
       !sameAssignment(a, a.game) || !Array.isArray(a.game.moves) || a.game.moves.length > a.opening.edges ||
       !a.game.moves.every(id => typeof id === 'string' && /^e(?:0|[1-9]\d{0,2})$/.test(id) && Number(id.slice(1)) < a.opening.edges)) return null;
   const deal = ratedDeal(a.seed, a.boardVersion);
@@ -108,15 +109,17 @@ function validActive(a, inspectSession, shift) {
 }
 
 function trimHistory(history) {
-  const counts = { green: 0, redblue: 0 };
-  return history.filter(record => ++counts[record.variant] <= HISTORY_PER_VARIANT);
+  const counts = { green: 0, redblue: 0 }, pendingThrough = { green: -1, redblue: -1 };
+  // Keep the suffix needed to recalculate later receipts in match order if
+  // an earlier game ended before its opening could be priced.
+  history.forEach((row, i) => { if (row.assessmentPending) pendingThrough[row.variant] = i; });
+  return history.filter((row, i) => ++counts[row.variant] <= HISTORY_PER_VARIANT || i <= pendingThrough[row.variant]);
 }
 
 // The v1 interchange layout kept the same receipts in per-variant lists.
 // Merge on read. Commit the migration only with a successful later mutation.
 function decode(raw, inspectSession) {
   if (raw === null) return emptyLedger();
-  if (raw.length > 1_000_000) return emptyLedger('invalid');
   const data = JSON.parse(raw);
   if (Number.isInteger(data?.version) && data.version > FORMAT) return emptyLedger('newer');
   if (data?.version === 1 && variants.every(v => Array.isArray(data.pools?.[v]?.history))) {
@@ -126,9 +129,9 @@ function decode(raw, inspectSession) {
     data.version = 2;
   }
   const shift = data?.version === 2 ? 0 : LEGACY_RATING_SHIFT;
-  if (![2, 3, FORMAT].includes(data?.version) || !validId(data.epoch) || !safeCount(data.issued) || data.issued > MAP_COUNT ||
+  if (![2, 3, 4, FORMAT].includes(data?.version) || !validId(data.epoch) || !safeCount(data.issued) || data.issued > MAP_COUNT ||
       !variants.every(v => validPool(data.pools?.[v], shift)) || !Array.isArray(data.history) ||
-      data.history.length > HISTORY_PER_VARIANT * variants.length || !data.history.every(r => validRecord(r, inspectSession, shift)) ||
+      !data.history.every(r => validRecord(r, inspectSession, shift)) || trimHistory(data.history).length !== data.history.length ||
       !(data.active === null || validActive(data.active, inspectSession, shift))) return emptyLedger('invalid');
   const stream = data.stream;
   if (data.issued === 0 ? stream !== null : !stream || !safeCount(stream.current) || stream.current >= MAP_COUNT ||
@@ -218,6 +221,13 @@ export function createRatingStore(options = {}) {
   const clock = options.clock ?? Date.now;
   const prepare = options.prepareOpening ?? assessRatedOpening;
   const chooseBot = options.chooseBot ?? localBotDecision;
+  const jobs = new Map();
+  let scheduled = false;
+  function scheduleAssessments() {
+    if (scheduled) return;
+    scheduled = true;
+    setTimeout(() => { scheduled = false; assessPending(); }, 0);
+  }
 
   // Validating an old receipt means replaying its legal moves on the original
   // board. Keep only the small validation result, keyed by the exact snapshot,
@@ -265,6 +275,7 @@ export function createRatingStore(options = {}) {
     const { status, ...data } = state;
     try { storage.setItem(RATING_KEY, JSON.stringify(data)); }
     catch { return failed('unavailable', read()); }
+    scheduleAssessments();
     return success(state, extra);
   }
 
@@ -281,7 +292,7 @@ export function createRatingStore(options = {}) {
     try {
       draw = nextMapSeed(before.stream, entropy);
       game = createRatedGame(variant, level, draw.seed, randomId(entropy));
-      opening = await prepare(game, settings);
+      opening = pendingOpening(game);
       if (!validOpening(opening, game) || opening.edges !== game.live.length ||
           opening.legalMoves !== legalMoves(game.board, game.live, game.firstSide).length) return failed('prepare-failed', before);
       forecast = forecastOpening(before.pools[variant], game, opening);
@@ -301,7 +312,7 @@ export function createRatingStore(options = {}) {
       game = startTurnClock(game, startedAt + RATED_OPENING_MS);
       state.active = { id: game.matchId, seed: game.seed, variant, level, seat: game.seat, firstSide: game.firstSide,
         boardVersion: game.boardVersion, difficulty: game.difficulty, family: game.board.family, timed: game.timed, game: saveData(game),
-        startedAt, bot, opening, forecast, expected: forecast.expected };
+        startedAt, bot, opening, forecast, expected: forecast.expected, assessmentPending: true, assessmentReady: false, assessmentWork: 0 };
       return write(state);
     });
   }
@@ -322,13 +333,98 @@ export function createRatingStore(options = {}) {
     const record = { ...assignment, game: saveData({ ...game, deadline: null }), endedAt, reason, won, rated, model, calibration,
       nuisanceSd: forecast.nuisanceSd, transferSd: forecast.transferSd,
       before: pool.rating, after: next.rating, delta: forecast.deltas?.[outcome] ?? next.rating - pool.rating,
-      rdBefore: pool.rd, rdAfter: next.rd };
+      rdBefore: pool.rd, rdAfter: next.rd, ...(active.assessmentPending === undefined ? {} : { assessmentPending: active.assessmentPending && !active.assessmentReady }) };
     const ratedGames = pool.ratedGames + Number(rated);
     state.pools[active.variant] = { ...next, games: pool.games + 1, ratedGames, wins: pool.wins + Number(won),
       losses: pool.losses + Number(!won), provisional: isProvisional(ratedGames, next.rd) };
     state.history = trimHistory([record, ...state.history]);
     state.active = null;
     return write(state, { record });
+  }
+
+  function priceActive(state, entry) {
+    entry.forecast = forecastOpening(state.pools[entry.variant], entry.game, entry.opening);
+    entry.expected = entry.forecast.expected;
+  }
+
+  function repriceFrom(state, index) {
+    const first = state.history[index], pool = state.pools[first.variant];
+    let moment = { rating: first.before, rd: first.rdBefore };
+    for (let i = index; i >= 0; i--) {
+      const row = state.history[i];
+      if (row.variant !== first.variant) continue;
+      const forecast = forecastOpening(moment, row.game, row.opening);
+      pool.ratedGames += Number(forecast.rated) - Number(row.rated);
+      const after = forecast[row.won ? 'win' : 'loss'];
+      Object.assign(row, { before: moment.rating, rdBefore: moment.rd, after: after.rating, rdAfter: after.rd,
+        delta: after.rating - moment.rating, rated: forecast.rated, expected: forecast.expected,
+        nuisanceSd: forecast.nuisanceSd, transferSd: forecast.transferSd });
+      moment = after;
+    }
+    Object.assign(pool, moment, { provisional: isProvisional(pool.ratedGames, moment.rd) });
+    if (state.active?.variant === first.variant) priceActive(state, state.active);
+    state.history = trimHistory(state.history);
+  }
+
+  function saveEvidence(id, opening, progress) {
+    return locked(() => {
+      const state = read();
+      if (state.status !== 'ok') return failed(state.status, state);
+      const active = state.active?.id === id;
+      const index = active ? -1 : state.history.findIndex(row => row.id === id);
+      const entry = active ? state.active : state.history[index];
+      if (!entry?.assessmentPending || progress.positions < entry.assessmentWork ||
+          (!active && !progress.ready) || !validOpening(opening, entry) ||
+          opening.edges !== entry.opening.edges || opening.legalMoves !== entry.opening.legalMoves) return success(state);
+      entry.opening = opening;
+      entry.assessmentWork = progress.positions;
+      entry.assessmentReady = progress.ready;
+      entry.assessmentPending = active ? !progress.complete : false;
+      if (active) priceActive(state, entry);
+      else repriceFrom(state, index);
+      const result = write(state, { updated: true });
+      if (result.ok) options.onAssessmentChange?.(entry.id);
+      return result;
+    });
+  }
+
+  // At most one live game and one older receipt use workers in this tab.
+  // Reconstructing from the deal (never the saved moves) also handles reloads.
+  function assessPending() {
+    const state = read();
+    const oldest = state.history.findLast(row => row.assessmentPending);
+    const entries = [state.active, oldest].filter(entry => entry?.assessmentPending);
+    const ids = new Set(entries.map(entry => entry.id));
+    for (const [id, job] of jobs) if (!ids.has(id)) job.abort();
+    for (const entry of entries) {
+      if (jobs.has(entry.id)) continue;
+      const control = new AbortController();
+      jobs.set(entry.id, control);
+      const original = createRatedGame(entry.variant, entry.level, entry.seed, entry.id, entry.boardVersion, entry.timed);
+      let lastKey = '', lastWork = 0;
+      const change = (progress, opening) => {
+        if (control.signal.aborted) return;
+        lastWork = progress.positions;
+        options.onAssessmentProgress?.(entry.id, progress);
+        const key = [progress.ready, progress.complete, opening.information, opening.winner, opening.lower, opening.upper,
+          opening.winningMoves, opening.losingMoves].join('|');
+        if (key === lastKey) return;
+        lastKey = key;
+        void saveEvidence(entry.id, opening, progress);
+      };
+      Promise.resolve().then(() => prepare(original, { signal: control.signal, onProgress: change,
+        settleWhenReady: entry !== state.active })).then(async opening => {
+        if (control.signal.aborted) return;
+        if (opening.information === 'unresolved') throw new Error('Opening still pending');
+        const saved = await saveEvidence(entry.id, opening, { ready: true, complete: true,
+          positions: Math.max(lastWork, opening.searchNodes) });
+        if (!saved.ok) throw new Error('Opening could not be saved');
+      }).catch(() => {
+        if (!control.signal.aborted) setTimeout(scheduleAssessments, 2000);
+      }).finally(() => {
+        if (jobs.get(entry.id) === control) jobs.delete(entry.id);
+      });
+    }
   }
 
   function assignmentResult(state, id) {
@@ -458,6 +554,6 @@ export function createRatingStore(options = {}) {
     });
   }
 
-  return { read, start, resume, refreshClock, matches, checkpoint: game => advance(game, false), finish: game => advance(game, true),
+  return { read, start, resume, refreshClock, matches, assessPending, checkpoint: game => advance(game, false), finish: game => advance(game, true),
     forfeit, reset };
 }

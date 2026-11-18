@@ -1,6 +1,6 @@
-import { analysisModes, certificateKey, intersectProof, proofLimit, recentCache } from './analysis-modes.js';
+import { analysisModes, certificateKey, intersectProof, proofLimit, recentCache } from './analysis-modes.js?v=13';
 import { createAnalysisSession } from './analysis-values.js?v=11';
-import { estimateDifficulty } from './difficulty.js';
+import { createOpeningSurvey, estimateDifficulty } from './difficulty.js?v=13';
 
 const sessions = recentCache(4);
 const sliceMs = 65;
@@ -55,7 +55,19 @@ function* analyze(board, variant, position) {
   if (assessCuts && ((difficultyRank < mode.rank && !(difficulty?.complete && difficulty.coverage === 1)) ||
       (result.winner && difficulty?.winner !== result.winner))) {
     yield { result, difficulty, difficultyRank, phase: 'assessing' };
-    const grade = estimateDifficulty(board, position.live, side, variant, { ...mode.cuts, analysis: result });
+    let grade;
+    if (position.mode === 'indefinite' && result.kind !== 'green' && position.live.length <= 256) {
+      const entry = openSession(board, variant, position);
+      entry.survey ??= createOpeningSurvey(board, position.live, side);
+      let pass = entry.survey.snapshot(result.winner);
+      while (pass.screened < pass.difficulty.legalMoves || pass.difficulty.unknownMoves) {
+        const until = performance.now() + sliceMs;
+        do { pass = entry.survey.advance(result.winner); }
+        while ((pass.screened < pass.difficulty.legalMoves || pass.difficulty.unknownMoves) && performance.now() < until);
+        yield { result, difficulty: pass.difficulty, difficultyRank, phase: 'assessing' };
+      }
+      grade = pass.difficulty;
+    } else grade = estimateDifficulty(board, position.live, side, variant, { ...mode.cuts, analysis: result });
     // An older pass may have checked more options on a faster slice. Keep
     // that evidence when the new sample leaves more of the index unresolved.
     if (!difficulty || grade.upper - grade.lower < difficulty.upper - difficulty.lower ||

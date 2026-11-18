@@ -112,7 +112,7 @@ test('automatic assessment continues an inconclusive deal and prices its actual 
   const game = gameFor('01CAFE', 'redblue', 'isabel');
   assert.equal(prepareRatedOpening(game).information, 'unresolved');
   const updates = [];
-  const opening = await assessRatedOpening(game, { onProgress: progress => updates.push(progress) });
+  const opening = await assessRatedOpening(game, { settleWhenReady: true, onProgress: progress => updates.push(progress) });
   assert.equal(opening.information, 'skill');
   assert.ok(opening.searchNodes > 480);
   replayWitnesses(game, opening);
@@ -125,7 +125,7 @@ test('automatic assessment continues an inconclusive deal and prices its actual 
 test('only exhausting the fixed policy tree certifies a one-outcome garden', async () => {
   const board = makeBoard([[0, 1, 'blue'], [1, 2, 'red']]);
   const game = { boardVersion: 5, variant: 'redblue', board, live: ['e0', 'e1'], seed: '000000',
-    seat: 'blue', firstSide: 'blue', players: {blue: {kind: 'human'}, red: {kind: 'computer', level: 'martin'}} };
+    seat: 'blue', firstSide: 'blue', moves: [], side: 'blue', players: {blue: {kind: 'human'}, red: {kind: 'computer', level: 'martin'}} };
   assert.equal(assessOutcomeChoice(game, 'blue').information, 'unresolved');
   const opening = await assessRatedOpening(game);
   assert.equal(opening.information, 'forced');
@@ -134,33 +134,25 @@ test('only exhausting the fixed policy tree certifies a one-outcome garden', asy
   replayWitnesses(game, opening);
 });
 
-test('indefinite assessment holds a solved opening until released and can stop before eligibility', async () => {
+test('automatic work stops at a settled opening and abandoned jobs can be canceled', async () => {
   const game = gameFor('A35D7F', 'green', 'noam');
-  const finish = new AbortController();
-  let complete = false, returned = false;
-  const pending = assessRatedOpening(game, {indefinite: true, finishSignal: finish.signal,
-    onProgress: p => { complete = p.complete; }}).then(result => { returned = true; return result; });
-  await new Promise(resolve => setTimeout(resolve, 5));
-  assert.ok(complete);
-  assert.equal(returned, false);
-  finish.abort();
-  assert.equal((await pending).certificate, 'perfect-green-policy');
-
-  const early = new AbortController();
-  const partial = await assessRatedOpening(gameFor('01CAFE', 'redblue', 'isabel'), {
-    indefinite: true, finishSignal: early.signal, onProgress: () => early.abort()
-  });
-  assert.equal(partial.certificate, 'assessment-stopped');
-  assert.equal(partial.information, 'unresolved');
+  const progress = [];
+  const result = await assessRatedOpening(game, { onProgress: p => progress.push(p) });
+  assert.equal(result.certificate, 'perfect-green-policy');
+  assert.ok(progress.at(-1).complete);
+  const control = new AbortController();
+  const unfinished = gameFor('01CAFE', 'redblue', 'isabel');
+  await assert.rejects(assessRatedOpening(unfinished, {
+    signal: control.signal, onProgress: () => control.abort()
+  }), { name: 'AbortError' });
+  await assert.rejects(assessRatedOpening({ ...unfinished, moves: ['e0'] }), /original position/);
 });
 
-test('indefinite mode refines the structural allowance after automatic mode would start', async () => {
+test('automatic work continues to refine a playable opening after the first scoreable estimate', async () => {
   const board = smallKnot();
   const game = { ...gameFor('A35D7E', 'redblue', 'martin'), board, live: board.edges.map(edge => edge.id) };
-  const automatic = await assessRatedOpening(game);
-  const finish = new AbortController();
-  const refined = await assessRatedOpening(game, { indefinite: true, finishSignal: finish.signal,
-    onProgress: p => { if (p.complete) finish.abort(); } });
+  const automatic = await assessRatedOpening(game, { settleWhenReady: true });
+  const refined = await assessRatedOpening(game);
   assert.equal(automatic.information, 'skill');
   assert.ok(automatic.lower < automatic.upper);
   assert.equal(refined.lower, refined.upper);

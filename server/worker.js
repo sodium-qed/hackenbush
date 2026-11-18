@@ -18,5 +18,5 @@ function serveAsset(path, request) {
 }
 
 export default {
-  fetch(request, env) { return serveGame(request, env, serveAsset); }
+  fetch(request, env, execution) { return serveGame(request, env, serveAsset, execution); }
 };

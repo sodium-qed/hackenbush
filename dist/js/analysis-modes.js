@@ -5,6 +5,8 @@ export const analysisModes = {
     cuts: { budgetMs: 60, nodeLimit: 1000, maxMoves: 32 } },
   research: { label: 'Research', rank: 3, budgetMs: 15000, nodeLimit: 300000,
     cuts: { budgetMs: 150, nodeLimit: 4000, maxMoves: 96 } },
+  indefinite: { label: 'Indefinite', rank: 4, budgetMs: Infinity, nodeLimit: Infinity,
+    cuts: { budgetMs: Infinity, nodeLimit: Infinity, maxMoves: Infinity } },
 };
 
 // Reading an entry keeps a frequently revisited replay position in the cache.

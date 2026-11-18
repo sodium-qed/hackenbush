@@ -123,6 +123,11 @@ function proofStatus(phase, result, mode, reason, improved) {
   return '';
 }
 
+let sharedAnalyzer;
+export function getReplayAnalyzer() {
+  return sharedAnalyzer ??= createAnalyzer(document.getElementById('analyzer-dialog'));
+}
+
 export function createAnalyzer(dialog) {
   const id = 'hb-analysis-' + ++nextId;
   dialog.classList.add('hb-analyzer');
@@ -273,7 +278,7 @@ export function createAnalyzer(dialog) {
     view.progress.textContent = message;
     view.stop.disabled = !searching && phase !== 'stopped';
     view.stop.textContent = phase === 'stopped' ? 'Resume search' : 'Stop search';
-    view.limits.textContent = 'Proof budget ' + duration(mode.budgetMs) + ' or ' + numberFormat.format(mode.nodeLimit) +
+    view.limits.textContent = modeName === 'indefinite' ? 'No time limit. Stop or resume the search at any point.' : 'Proof budget ' + duration(mode.budgetMs) + ' or ' + numberFormat.format(mode.nodeLimit) +
       ' nodes. Cut assessment ' + duration(mode.cuts.budgetMs) + '.';
     view['change-row'].hidden = !index;
     if (current) {
@@ -413,7 +418,7 @@ export function createAnalyzer(dialog) {
 
     if (typeof Worker !== 'function') { fallback(); return; }
     try {
-      worker ??= new Worker(new URL('./analysis-worker.js?v=11', import.meta.url), { type: 'module' });
+      worker ??= new Worker(new URL('./analysis-worker.js?v=13', import.meta.url), { type: 'module' });
       const source = worker;
       worker.onmessage = ({ data }) => {
         if (worker !== source) return;
@@ -496,13 +501,16 @@ export function createAnalyzer(dialog) {
     };
     const signature = JSON.stringify([match.variant, topology]);
     boardRecord = boards.get(signature) || boards.set(signature, { id: ++boardSerial, snapshots: recentCache(64) });
-    modeName = 'quick';
+    try {
+      const saved = localStorage.getItem('groundwork.hackenbush.analyzer.depth');
+      modeName = Object.hasOwn(analysisModes, saved) ? saved : 'quick';
+    } catch { modeName = 'quick'; }
     for (const input of modes) input.checked = input.value === modeName;
     const mapName = [variants[match.variant] || 'Hackenbush', match.board.family, match.board.mapSeed].filter(Boolean);
     view.map.textContent = mapName.join(' · ');
     view.result.textContent = player(match, match.victor) + ' won ' + (match.timedOut
       ? 'on time. ' + player(match, match.timedOut) + ' ran out of time.'
-      : 'the match. ' + player(match, match.side) + ' had no legal cut.');
+      : match.resigned ? 'by resignation.' : 'the match. ' + player(match, match.side) + ' had no legal cut.');
     if (!dialog.open) dialog.showModal();
     renderer = createBoard(view.drawing);
     renderLandscape(renderer.landscape, match.board.world, match.board.mapSeed || 'A35D7E');
@@ -520,6 +528,7 @@ export function createAnalyzer(dialog) {
   for (const input of modes) input.addEventListener('change', () => {
     if (!game || !input.checked) return;
     modeName = input.value;
+    try { localStorage.setItem('groundwork.hackenbush.analyzer.depth', modeName); } catch { /* Session only. */ }
     queueWork();
   });
   view.stop.addEventListener('click', () => {
